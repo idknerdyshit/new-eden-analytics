@@ -1,0 +1,36 @@
+# ── Chef: dependency caching layer ──────────────────────────────────
+FROM rust:bookworm AS chef
+RUN cargo install cargo-chef
+WORKDIR /app
+
+# ── Plan: capture dependency graph ─────────────────────────────────
+FROM chef AS planner
+COPY backend/ .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ── Build: compile with cached deps ───────────────────────────────
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY backend/ .
+RUN cargo build --release
+
+# ── nea-server runtime ─────────────────────────────────────────────
+FROM debian:bookworm-slim AS nea-server
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/nea-server /usr/local/bin/nea-server
+EXPOSE 3001
+ENTRYPOINT ["nea-server"]
+
+# ── nea-worker runtime ─────────────────────────────────────────────
+FROM debian:bookworm-slim AS nea-worker
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/nea-worker /usr/local/bin/nea-worker
+COPY --from=builder /app/target/release/sde-import /usr/local/bin/sde-import
+COPY --from=builder /app/target/release/kill-backfill /usr/local/bin/kill-backfill
+ENTRYPOINT ["nea-worker"]

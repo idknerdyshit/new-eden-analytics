@@ -1,0 +1,20 @@
+[package]
+name = "nea-worker"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "nea-worker"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+dotenvy = { workspace = true }
+sqlx = { workspace = true }
+nea-db = { workspace = true }
+nea-esi = { workspace = true }
+nea-zkill = { workspace = true }
+nea-analysis = { workspace = true }

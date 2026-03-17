@@ -1,0 +1,95 @@
+mod aggregation;
+mod analyzer;
+mod killmail_poller;
+mod market_history;
+mod market_orders;
+
+use std::sync::Arc;
+
+use nea_esi::EsiClient;
+use nea_zkill::R2z2Client;
+use tokio::signal;
+
+#[tokio::main]
+async fn main() {
+    dotenvy::dotenv().ok();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    tracing::info!("nea-worker starting");
+
+    // Database pool
+    let database_url =
+        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = nea_db::create_pool(&database_url)
+        .await
+        .expect("failed to create database pool");
+    tracing::info!("database pool created");
+
+    // Run migrations
+    nea_db::run_migrations(&pool)
+        .await
+        .expect("failed to run database migrations");
+    tracing::info!("database migrations complete");
+
+    // Clients
+    let esi = Arc::new(EsiClient::new());
+    let r2z2 = Arc::new(R2z2Client::new());
+
+    tracing::info!("spawning worker tasks");
+
+    // Spawn all worker tasks
+    let pool_mh = pool.clone();
+    let esi_mh = Arc::clone(&esi);
+    let market_history_handle =
+        tokio::spawn(async move { market_history::run(pool_mh, esi_mh).await });
+
+    let pool_mo = pool.clone();
+    let esi_mo = Arc::clone(&esi);
+    let market_orders_handle =
+        tokio::spawn(async move { market_orders::run(pool_mo, esi_mo).await });
+
+    let pool_kp = pool.clone();
+    let r2z2_kp = Arc::clone(&r2z2);
+    let killmail_poller_handle =
+        tokio::spawn(async move { killmail_poller::run(pool_kp, r2z2_kp).await });
+
+    let pool_agg = pool.clone();
+    let aggregation_handle =
+        tokio::spawn(async move { aggregation::run(pool_agg).await });
+
+    let pool_an = pool.clone();
+    let analyzer_handle =
+        tokio::spawn(async move { analyzer::run(pool_an).await });
+
+    tracing::info!("all worker tasks spawned, waiting for shutdown signal");
+
+    // Wait for Ctrl+C or any task to finish (which would indicate an unexpected exit)
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            tracing::info!("received Ctrl+C, shutting down");
+        }
+        result = market_history_handle => {
+            tracing::error!(?result, "market_history task exited unexpectedly");
+        }
+        result = market_orders_handle => {
+            tracing::error!(?result, "market_orders task exited unexpectedly");
+        }
+        result = killmail_poller_handle => {
+            tracing::error!(?result, "killmail_poller task exited unexpectedly");
+        }
+        result = aggregation_handle => {
+            tracing::error!(?result, "aggregation task exited unexpectedly");
+        }
+        result = analyzer_handle => {
+            tracing::error!(?result, "analyzer task exited unexpectedly");
+        }
+    }
+
+    tracing::info!("nea-worker shutting down");
+}

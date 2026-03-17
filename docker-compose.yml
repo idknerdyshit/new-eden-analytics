@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nea}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nea_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-new_eden_analytics}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nea} -d ${POSTGRES_DB:-new_eden_analytics}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend-server:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.backend
+      target: nea-server
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-nea}:${POSTGRES_PASSWORD:-nea_dev}@timescaledb:5432/${POSTGRES_DB:-new_eden_analytics}
+    ports:
+      - "3001:3001"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  backend-worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.backend
+      target: nea-worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-nea}:${POSTGRES_PASSWORD:-nea_dev}@timescaledb:5432/${POSTGRES_DB:-new_eden_analytics}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.frontend
+    env_file: .env
+    ports:
+      - "3000:3000"
+    environment:
+      API_BACKEND_URL: http://backend-server:3001
+    depends_on:
+      - backend-server
+
+volumes:
+  pgdata:

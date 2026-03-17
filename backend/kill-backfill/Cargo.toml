@@ -1,0 +1,20 @@
+[package]
+name = "kill-backfill"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "kill-backfill"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+serde_json = { workspace = true }
+nea-db = { workspace = true }
+nea-esi = { workspace = true }
+nea-zkill = { workspace = true }

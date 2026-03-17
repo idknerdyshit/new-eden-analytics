@@ -1,0 +1,19 @@
+[package]
+name = "sde-import"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sde-import"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+sqlx = { workspace = true }
+csv = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+nea-db = { workspace = true }
