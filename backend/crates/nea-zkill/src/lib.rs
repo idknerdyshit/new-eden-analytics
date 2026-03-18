@@ -33,7 +33,8 @@ pub type Result<T> = std::result::Result<T, ZkillError>;
 #[derive(Debug, Clone, Deserialize)]
 pub struct R2z2Response {
     pub killmail_id: i64,
-    pub killmail_time: String,
+    #[serde(default)]
+    pub killmail_time: Option<String>,
     #[serde(default)]
     pub solar_system_id: i32,
     pub victim: ZkillVictim,

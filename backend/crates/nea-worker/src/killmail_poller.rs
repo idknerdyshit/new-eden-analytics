@@ -36,8 +36,19 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
     loop {
         match r2z2.fetch_sequence(sequence_id).await {
             Ok(Some(response)) => {
-                // Parse killmail_time
-                let kill_time = nea_zkill::parse_killmail_time(&response.killmail_time);
+                // Parse killmail_time — skip if missing
+                let kill_time = match &response.killmail_time {
+                    Some(t) => nea_zkill::parse_killmail_time(t),
+                    None => {
+                        tracing::warn!(
+                            sequence_id,
+                            killmail_id = response.killmail_id,
+                            "killmail_poller: skipping killmail with missing killmail_time"
+                        );
+                        sequence_id += 1;
+                        continue;
+                    }
+                };
 
                 // Insert killmail
                 let km = Killmail {
