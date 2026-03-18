@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod auth;
+pub mod characters;
 pub mod dashboard;
 pub mod destruction;
 pub mod items;
@@ -73,6 +74,7 @@ fn api_router() -> Router<AppState> {
         .merge(market::routes())
         .merge(analysis::routes())
         .merge(destruction::routes())
+        .merge(characters::routes())
         .merge(auth::routes())
 }
 

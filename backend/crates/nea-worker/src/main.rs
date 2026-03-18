@@ -3,6 +3,7 @@ mod analyzer;
 mod killmail_poller;
 mod market_history;
 mod market_orders;
+mod profile_aggregator;
 
 use std::sync::Arc;
 
@@ -111,6 +112,11 @@ async fn main() {
     let analyzer_handle =
         tokio::spawn(async move { analyzer::run(pool_an).await });
 
+    let pool_pa = pool.clone();
+    let esi_pa = Arc::clone(&esi);
+    let profile_aggregator_handle =
+        tokio::spawn(async move { profile_aggregator::run(pool_pa, esi_pa).await });
+
     tracing::info!("all worker tasks spawned, waiting for shutdown signal");
 
     // Wait for Ctrl+C or any task to finish (which would indicate an unexpected exit)
@@ -132,6 +138,9 @@ async fn main() {
         }
         result = analyzer_handle => {
             tracing::error!(?result, "analyzer task exited unexpectedly");
+        }
+        result = profile_aggregator_handle => {
+            tracing::error!(?result, "profile_aggregator task exited unexpectedly");
         }
     }
 

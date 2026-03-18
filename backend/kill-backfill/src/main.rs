@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate, Utc};
-use nea_db::models::*;
+use nea_db::models::{DailyDestruction, Killmail, KillmailAttacker, KillmailItem, KillmailVictim};
 use nea_esi::EsiClient;
 use nea_zkill::R2z2Client;
 use sqlx::PgPool;
@@ -243,6 +243,7 @@ async fn process_killmail(
             type_id: i.item_type_id,
             quantity_destroyed: i.quantity_destroyed.unwrap_or(0),
             quantity_dropped: i.quantity_dropped.unwrap_or(0),
+            flag: i.flag,
         })
         .collect();
 
@@ -254,9 +255,33 @@ async fn process_killmail(
         killmail_id: km.killmail_id,
         kill_time,
         ship_type_id: km.victim.ship_type_id,
+        character_id: km.victim.character_id,
+        corporation_id: km.victim.corporation_id,
+        alliance_id: km.victim.alliance_id,
     };
 
     nea_db::insert_killmail_victim(pool, &victim).await?;
+
+    // Insert attackers
+    let attackers: Vec<KillmailAttacker> = km
+        .attackers
+        .iter()
+        .map(|a| KillmailAttacker {
+            killmail_id: km.killmail_id,
+            kill_time,
+            character_id: a.character_id,
+            corporation_id: a.corporation_id,
+            alliance_id: a.alliance_id,
+            ship_type_id: a.ship_type_id,
+            weapon_type_id: a.weapon_type_id,
+            damage_done: a.damage_done,
+            final_blow: a.final_blow,
+        })
+        .collect();
+
+    if !attackers.is_empty() {
+        nea_db::insert_killmail_attackers(pool, &attackers).await?;
+    }
 
     Ok(true)
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use nea_db::{Killmail, KillmailItem, KillmailVictim};
+use nea_db::{Killmail, KillmailAttacker, KillmailItem, KillmailVictim};
 use nea_zkill::R2z2Client;
 use sqlx::PgPool;
 use tokio::time;
@@ -77,6 +77,7 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                         type_id: item.item_type_id,
                         quantity_destroyed: item.quantity_destroyed.unwrap_or(0),
                         quantity_dropped: item.quantity_dropped.unwrap_or(0),
+                        flag: item.flag,
                     })
                     .collect();
 
@@ -92,6 +93,9 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                     killmail_id: response.killmail_id,
                     kill_time,
                     ship_type_id: response.victim.ship_type_id,
+                    character_id: response.victim.character_id,
+                    corporation_id: response.victim.corporation_id,
+                    alliance_id: response.victim.alliance_id,
                 };
 
                 if let Err(e) = nea_db::insert_killmail_victim(&pool, &victim).await {
@@ -99,6 +103,32 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                         killmail_id = response.killmail_id,
                         "killmail_poller: failed to insert killmail victim: {e}"
                     );
+                }
+
+                // Insert attackers
+                let attackers: Vec<KillmailAttacker> = response
+                    .attackers
+                    .iter()
+                    .map(|a| KillmailAttacker {
+                        killmail_id: response.killmail_id,
+                        kill_time,
+                        character_id: a.character_id,
+                        corporation_id: a.corporation_id,
+                        alliance_id: a.alliance_id,
+                        ship_type_id: a.ship_type_id,
+                        weapon_type_id: a.weapon_type_id,
+                        damage_done: a.damage_done,
+                        final_blow: a.final_blow,
+                    })
+                    .collect();
+
+                if !attackers.is_empty() {
+                    if let Err(e) = nea_db::insert_killmail_attackers(&pool, &attackers).await {
+                        tracing::warn!(
+                            killmail_id = response.killmail_id,
+                            "killmail_poller: failed to insert killmail attackers: {e}"
+                        );
+                    }
                 }
 
                 // Save sequence to worker_state
@@ -119,6 +149,7 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                     sequence_id,
                     killmail_id = response.killmail_id,
                     items = items.len(),
+                    attackers = attackers.len(),
                     "killmail_poller: processed killmail"
                 );
 

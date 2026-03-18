@@ -56,6 +56,12 @@
 				>
 					Search
 				</a>
+				<a
+					href="/pilots"
+					class="text-sm font-medium text-[var(--color-text-secondary)] no-underline transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
+				>
+					Pilots
+				</a>
 			</div>
 		</div>
 		<div class="flex items-center gap-4">

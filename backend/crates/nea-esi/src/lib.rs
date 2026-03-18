@@ -67,6 +67,35 @@ pub struct EsiKillmail {
     #[serde(default)]
     pub solar_system_id: i32,
     pub victim: EsiKillmailVictim,
+    #[serde(default)]
+    pub attackers: Vec<EsiKillmailAttacker>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EsiKillmailAttacker {
+    #[serde(default)]
+    pub character_id: Option<i64>,
+    #[serde(default)]
+    pub corporation_id: Option<i64>,
+    #[serde(default)]
+    pub alliance_id: Option<i64>,
+    #[serde(default)]
+    pub ship_type_id: i32,
+    #[serde(default)]
+    pub weapon_type_id: i32,
+    #[serde(default)]
+    pub damage_done: i32,
+    #[serde(default)]
+    pub final_blow: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EsiCharacterInfo {
+    pub name: String,
+    #[serde(default)]
+    pub corporation_id: Option<i64>,
+    #[serde(default)]
+    pub alliance_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -338,6 +367,23 @@ impl EsiClient {
     }
 
     // -----------------------------------------------------------------------
+    // Character endpoint
+    // -----------------------------------------------------------------------
+
+    /// Fetch character info from ESI.
+    #[tracing::instrument(skip(self))]
+    pub async fn get_character(&self, character_id: i64) -> Result<EsiCharacterInfo> {
+        let url = format!("{}/characters/{}/", BASE_URL, character_id);
+        let resp = self.request(&url).await?;
+        let info: EsiCharacterInfo = resp
+            .json()
+            .await
+            .map_err(|e| EsiError::Deserialize(e.to_string()))?;
+        debug!(character_id, name = %info.name, "get_character complete");
+        Ok(info)
+    }
+
+    // -----------------------------------------------------------------------
     // Utility
     // -----------------------------------------------------------------------
 
@@ -502,7 +548,24 @@ mod tests {
                         "singleton": 0
                     }
                 ]
-            }
+            },
+            "attackers": [
+                {
+                    "character_id": 95000001,
+                    "corporation_id": 98000002,
+                    "ship_type_id": 24690,
+                    "weapon_type_id": 3170,
+                    "damage_done": 5000,
+                    "final_blow": true
+                },
+                {
+                    "corporation_id": 1000125,
+                    "ship_type_id": 0,
+                    "weapon_type_id": 0,
+                    "damage_done": 100,
+                    "final_blow": false
+                }
+            ]
         }"#;
 
         let km: EsiKillmail = serde_json::from_str(json).unwrap();
@@ -517,6 +580,13 @@ mod tests {
         assert_eq!(km.victim.items[0].quantity_destroyed, Some(1));
         assert_eq!(km.victim.items[1].item_type_id, 3170);
         assert_eq!(km.victim.items[1].quantity_dropped, Some(5));
+        assert_eq!(km.attackers.len(), 2);
+        assert_eq!(km.attackers[0].character_id, Some(95000001));
+        assert_eq!(km.attackers[0].ship_type_id, 24690);
+        assert_eq!(km.attackers[0].damage_done, 5000);
+        assert!(km.attackers[0].final_blow);
+        assert_eq!(km.attackers[1].character_id, None);
+        assert!(!km.attackers[1].final_blow);
     }
 
     #[test]

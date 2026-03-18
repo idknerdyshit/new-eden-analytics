@@ -249,8 +249,8 @@ pub async fn insert_killmail_items(
     for item in items {
         sqlx::query(
             r#"
-            INSERT INTO killmail_items (killmail_id, kill_time, type_id, quantity_destroyed, quantity_dropped)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO killmail_items (killmail_id, kill_time, type_id, quantity_destroyed, quantity_dropped, flag)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT DO NOTHING
             "#,
         )
@@ -259,6 +259,7 @@ pub async fn insert_killmail_items(
         .bind(item.type_id)
         .bind(item.quantity_destroyed)
         .bind(item.quantity_dropped)
+        .bind(item.flag)
         .execute(pool)
         .await?;
     }
@@ -271,16 +272,48 @@ pub async fn insert_killmail_victim(
 ) -> Result<(), DbError> {
     sqlx::query(
         r#"
-        INSERT INTO killmail_victims (killmail_id, kill_time, ship_type_id)
-        VALUES ($1, $2, $3)
+        INSERT INTO killmail_victims (killmail_id, kill_time, ship_type_id, character_id, corporation_id, alliance_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT DO NOTHING
         "#,
     )
     .bind(victim.killmail_id)
     .bind(victim.kill_time)
     .bind(victim.ship_type_id)
+    .bind(victim.character_id)
+    .bind(victim.corporation_id)
+    .bind(victim.alliance_id)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+pub async fn insert_killmail_attackers(
+    pool: &PgPool,
+    attackers: &[KillmailAttacker],
+) -> Result<(), DbError> {
+    for attacker in attackers {
+        sqlx::query(
+            r#"
+            INSERT INTO killmail_attackers
+                (killmail_id, kill_time, character_id, corporation_id, alliance_id,
+                 ship_type_id, weapon_type_id, damage_done, final_blow)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT DO NOTHING
+            "#,
+        )
+        .bind(attacker.killmail_id)
+        .bind(attacker.kill_time)
+        .bind(attacker.character_id)
+        .bind(attacker.corporation_id)
+        .bind(attacker.alliance_id)
+        .bind(attacker.ship_type_id)
+        .bind(attacker.weapon_type_id)
+        .bind(attacker.damage_done)
+        .bind(attacker.final_blow)
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
@@ -348,6 +381,7 @@ pub async fn get_top_destruction(
         JOIN sde_types st ON st.type_id = dd.type_id
         WHERE dd.date >= CURRENT_DATE - $1 * INTERVAL '1 day'
           AND st.category_id IN (6, 7)
+          AND st.group_id != 29
         ORDER BY dd.quantity_destroyed DESC
         LIMIT $2
         "#,
@@ -691,4 +725,235 @@ pub async fn get_user(pool: &PgPool, character_id: i64) -> Result<Option<User>, 
     .fetch_optional(pool)
     .await?;
     Ok(row)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Character / Profile queries
+// ═══════════════════════════════════════════════════════════════════
+
+pub async fn upsert_character(pool: &PgPool, character: &Character) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO characters (character_id, name, corporation_id, alliance_id, fetched_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (character_id) DO UPDATE
+        SET name = EXCLUDED.name,
+            corporation_id = EXCLUDED.corporation_id,
+            alliance_id = EXCLUDED.alliance_id,
+            fetched_at = EXCLUDED.fetched_at
+        "#,
+    )
+    .bind(character.character_id)
+    .bind(&character.name)
+    .bind(character.corporation_id)
+    .bind(character.alliance_id)
+    .bind(character.fetched_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_character(pool: &PgPool, character_id: i64) -> Result<Option<Character>, DbError> {
+    let row = sqlx::query_as::<_, Character>(
+        r#"
+        SELECT character_id, name, corporation_id, alliance_id, fetched_at
+        FROM characters
+        WHERE character_id = $1
+        "#,
+    )
+    .bind(character_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn search_characters(
+    pool: &PgPool,
+    query: &str,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<Character>, DbError> {
+    let start = Instant::now();
+    let pattern = format!("%{}%", query);
+    let rows = sqlx::query_as::<_, Character>(
+        r#"
+        SELECT character_id, name, corporation_id, alliance_id, fetched_at
+        FROM characters
+        WHERE name ILIKE $1
+        ORDER BY name
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(&pattern)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(query, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "search_characters");
+    Ok(rows)
+}
+
+pub async fn search_characters_count(
+    pool: &PgPool,
+    query: &str,
+) -> Result<i64, DbError> {
+    let pattern = format!("%{}%", query);
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM characters
+        WHERE name ILIKE $1
+        "#,
+    )
+    .bind(&pattern)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn get_character_profile(
+    pool: &PgPool,
+    character_id: i64,
+) -> Result<Option<CharacterProfile>, DbError> {
+    let row = sqlx::query_as::<_, CharacterProfile>(
+        r#"
+        SELECT character_id, total_kills, total_losses, solo_kills, solo_losses,
+               top_ships_flown, top_ships_lost, common_fits, active_period, computed_at
+        FROM character_profiles
+        WHERE character_id = $1
+        "#,
+    )
+    .bind(character_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn upsert_character_profile(
+    pool: &PgPool,
+    profile: &CharacterProfile,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO character_profiles
+            (character_id, total_kills, total_losses, solo_kills, solo_losses,
+             top_ships_flown, top_ships_lost, common_fits, active_period, computed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (character_id) DO UPDATE
+        SET total_kills = EXCLUDED.total_kills,
+            total_losses = EXCLUDED.total_losses,
+            solo_kills = EXCLUDED.solo_kills,
+            solo_losses = EXCLUDED.solo_losses,
+            top_ships_flown = EXCLUDED.top_ships_flown,
+            top_ships_lost = EXCLUDED.top_ships_lost,
+            common_fits = EXCLUDED.common_fits,
+            active_period = EXCLUDED.active_period,
+            computed_at = EXCLUDED.computed_at
+        "#,
+    )
+    .bind(profile.character_id)
+    .bind(profile.total_kills)
+    .bind(profile.total_losses)
+    .bind(profile.solo_kills)
+    .bind(profile.solo_losses)
+    .bind(&profile.top_ships_flown)
+    .bind(&profile.top_ships_lost)
+    .bind(&profile.common_fits)
+    .bind(&profile.active_period)
+    .bind(profile.computed_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_character_kills(
+    pool: &PgPool,
+    character_id: i64,
+    limit: i32,
+) -> Result<Vec<Killmail>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, Killmail>(
+        r#"
+        SELECT DISTINCT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id
+        FROM killmail_attackers a
+        JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
+        WHERE a.character_id = $1
+        ORDER BY k.kill_time DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(character_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    debug!(character_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_character_kills");
+    Ok(rows)
+}
+
+pub async fn get_character_losses(
+    pool: &PgPool,
+    character_id: i64,
+    limit: i32,
+) -> Result<Vec<Killmail>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, Killmail>(
+        r#"
+        SELECT DISTINCT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id
+        FROM killmail_victims v
+        JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
+        WHERE v.character_id = $1
+        ORDER BY k.kill_time DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(character_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    debug!(character_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_character_losses");
+    Ok(rows)
+}
+
+/// Get character IDs that have activity but are not yet in the characters cache.
+pub async fn get_uncached_character_ids(
+    pool: &PgPool,
+    limit: i32,
+) -> Result<Vec<i64>, DbError> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT character_id FROM (
+            SELECT DISTINCT character_id FROM killmail_attackers WHERE character_id IS NOT NULL
+            UNION
+            SELECT DISTINCT character_id FROM killmail_victims WHERE character_id IS NOT NULL
+        ) all_chars
+        WHERE character_id NOT IN (SELECT character_id FROM characters)
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// Get character IDs with activity since the given timestamp.
+pub async fn get_active_character_ids_since(
+    pool: &PgPool,
+    since: DateTime<Utc>,
+) -> Result<Vec<i64>, DbError> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT character_id FROM (
+            SELECT character_id FROM killmail_attackers
+            WHERE character_id IS NOT NULL AND kill_time > $1
+            UNION
+            SELECT character_id FROM killmail_victims
+            WHERE character_id IS NOT NULL AND kill_time > $1
+        ) active
+        "#,
+    )
+    .bind(since)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
 }

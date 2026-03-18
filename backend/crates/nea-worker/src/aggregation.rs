@@ -34,11 +34,15 @@ async fn aggregate_destruction(
         FROM (
             SELECT ki.killmail_id, ki.kill_time, ki.type_id, ki.quantity_destroyed
             FROM killmail_items ki
+            JOIN sde_types st ON st.type_id = ki.type_id
             WHERE ki.kill_time >= NOW() - INTERVAL '7 days'
+              AND st.group_id != 29
             UNION ALL
             SELECT kv.killmail_id, kv.kill_time, kv.ship_type_id as type_id, 1::bigint as quantity_destroyed
             FROM killmail_victims kv
+            JOIN sde_types st ON st.type_id = kv.ship_type_id
             WHERE kv.kill_time >= NOW() - INTERVAL '7 days'
+              AND st.group_id != 29
         ) combined
         GROUP BY type_id, kill_time::date
         "#,

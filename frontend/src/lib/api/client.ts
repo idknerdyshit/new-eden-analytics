@@ -107,6 +107,69 @@ export interface User {
 	character_name: string;
 }
 
+// ── Character / Profile Types ──
+
+export interface CharacterInfo {
+	character_id: number;
+	name: string;
+	corporation_id: number | null;
+	alliance_id: number | null;
+	fetched_at: string;
+}
+
+export interface CharacterProfile {
+	character_id: number;
+	total_kills: number;
+	total_losses: number;
+	solo_kills: number;
+	solo_losses: number;
+	top_ships_flown: ShipCount[] | null;
+	top_ships_lost: ShipCount[] | null;
+	common_fits: FittingCluster[] | null;
+	active_period: { first_seen: string; last_seen: string } | null;
+	computed_at: string;
+}
+
+export interface ShipCount {
+	type_id: number;
+	name: string;
+	count: number;
+}
+
+export interface FittingModule {
+	type_id: number;
+	name: string;
+	flag: number;
+}
+
+export interface FittingCluster {
+	ship_type_id: number;
+	ship_name: string;
+	modules: FittingModule[];
+	count: number;
+	variant_count: number;
+}
+
+export interface CharacterDetail {
+	character: CharacterInfo;
+	profile: CharacterProfile | null;
+}
+
+export interface CharacterSearchResult {
+	characters: CharacterInfo[];
+	page: number;
+	per_page: number;
+	total: number;
+}
+
+export interface KillmailEntry {
+	killmail_id: number;
+	kill_time: string;
+	solar_system_id: number | null;
+	total_value: number | null;
+	r2z2_sequence_id: number | null;
+}
+
 // ── Fetch Wrapper ──
 
 class ApiError extends Error {
@@ -163,5 +226,15 @@ export const api = {
 			}
 			throw e;
 		}
-	}
+	},
+	searchCharacters: (q: string, page = 1) =>
+		fetchJson<CharacterSearchResult>(
+			`/characters/search?q=${encodeURIComponent(q)}&page=${page}`
+		),
+	getCharacter: (characterId: number) =>
+		fetchJson<CharacterDetail>(`/characters/${characterId}`),
+	getCharacterKills: (characterId: number, limit = 20) =>
+		fetchJson<KillmailEntry[]>(`/characters/${characterId}/kills?limit=${limit}`),
+	getCharacterLosses: (characterId: number, limit = 20) =>
+		fetchJson<KillmailEntry[]>(`/characters/${characterId}/losses?limit=${limit}`)
 };

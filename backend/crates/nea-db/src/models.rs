@@ -85,6 +85,7 @@ pub struct KillmailItem {
     pub type_id: i32,
     pub quantity_destroyed: i64,
     pub quantity_dropped: i64,
+    pub flag: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -92,6 +93,45 @@ pub struct KillmailVictim {
     pub killmail_id: i64,
     pub kill_time: DateTime<Utc>,
     pub ship_type_id: i32,
+    pub character_id: Option<i64>,
+    pub corporation_id: Option<i64>,
+    pub alliance_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct KillmailAttacker {
+    pub killmail_id: i64,
+    pub kill_time: DateTime<Utc>,
+    pub character_id: Option<i64>,
+    pub corporation_id: Option<i64>,
+    pub alliance_id: Option<i64>,
+    pub ship_type_id: i32,
+    pub weapon_type_id: i32,
+    pub damage_done: i32,
+    pub final_blow: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Character {
+    pub character_id: i64,
+    pub name: String,
+    pub corporation_id: Option<i64>,
+    pub alliance_id: Option<i64>,
+    pub fetched_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct CharacterProfile {
+    pub character_id: i64,
+    pub total_kills: i32,
+    pub total_losses: i32,
+    pub solo_kills: i32,
+    pub solo_losses: i32,
+    pub top_ships_flown: Option<serde_json::Value>,
+    pub top_ships_lost: Option<serde_json::Value>,
+    pub common_fits: Option<serde_json::Value>,
+    pub active_period: Option<serde_json::Value>,
+    pub computed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

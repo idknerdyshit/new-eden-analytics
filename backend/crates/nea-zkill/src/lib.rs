@@ -38,6 +38,8 @@ pub struct R2z2Response {
     #[serde(default)]
     pub solar_system_id: i32,
     pub victim: ZkillVictim,
+    #[serde(default)]
+    pub attackers: Vec<ZkillAttacker>,
     pub zkb: ZkillZkb,
     #[serde(default)]
     pub sequence_id: Option<i64>,
@@ -63,6 +65,8 @@ pub struct ZkillKillmail {
     pub killmail_time: String,
     pub solar_system_id: i32,
     pub victim: ZkillVictim,
+    #[serde(default)]
+    pub attackers: Vec<ZkillAttacker>,
     pub zkb: ZkillZkb,
 }
 
@@ -70,7 +74,31 @@ pub struct ZkillKillmail {
 pub struct ZkillVictim {
     pub ship_type_id: i32,
     #[serde(default)]
+    pub character_id: Option<i64>,
+    #[serde(default)]
+    pub corporation_id: Option<i64>,
+    #[serde(default)]
+    pub alliance_id: Option<i64>,
+    #[serde(default)]
     pub items: Vec<ZkillItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ZkillAttacker {
+    #[serde(default)]
+    pub character_id: Option<i64>,
+    #[serde(default)]
+    pub corporation_id: Option<i64>,
+    #[serde(default)]
+    pub alliance_id: Option<i64>,
+    #[serde(default)]
+    pub ship_type_id: i32,
+    #[serde(default)]
+    pub weapon_type_id: i32,
+    #[serde(default)]
+    pub damage_done: i32,
+    #[serde(default)]
+    pub final_blow: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -80,6 +108,8 @@ pub struct ZkillItem {
     pub quantity_destroyed: Option<i64>,
     #[serde(default)]
     pub quantity_dropped: Option<i64>,
+    #[serde(default)]
+    pub flag: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -252,14 +282,26 @@ mod tests {
             "solar_system_id": 30000142,
             "victim": {
                 "ship_type_id": 587,
+                "character_id": 91234567,
+                "corporation_id": 98000001,
                 "items": [
                     {
                         "item_type_id": 2032,
                         "quantity_destroyed": 1,
-                        "quantity_dropped": null
+                        "quantity_dropped": null,
+                        "flag": 27
                     }
                 ]
             },
+            "attackers": [
+                {
+                    "character_id": 95000001,
+                    "ship_type_id": 24690,
+                    "weapon_type_id": 3170,
+                    "damage_done": 5000,
+                    "final_blow": true
+                }
+            ],
             "zkb": {
                 "hash": "abcdef1234567890",
                 "totalValue": 1500000.50
@@ -273,9 +315,18 @@ mod tests {
         assert_eq!(resp.zkb.hash, "abcdef1234567890");
         assert_eq!(resp.zkb.total_value, 1500000.50);
         assert_eq!(resp.victim.ship_type_id, 587);
+        assert_eq!(resp.victim.character_id, Some(91234567));
+        assert_eq!(resp.victim.corporation_id, Some(98000001));
+        assert_eq!(resp.victim.alliance_id, None);
         assert_eq!(resp.victim.items.len(), 1);
         assert_eq!(resp.victim.items[0].item_type_id, 2032);
         assert_eq!(resp.victim.items[0].quantity_destroyed, Some(1));
+        assert_eq!(resp.victim.items[0].flag, 27);
+        assert_eq!(resp.attackers.len(), 1);
+        assert_eq!(resp.attackers[0].character_id, Some(95000001));
+        assert_eq!(resp.attackers[0].ship_type_id, 24690);
+        assert_eq!(resp.attackers[0].damage_done, 5000);
+        assert!(resp.attackers[0].final_blow);
         assert_eq!(resp.sequence_id, Some(42));
     }
 
@@ -317,19 +368,31 @@ mod tests {
             "solar_system_id": 30000142,
             "victim": {
                 "ship_type_id": 587,
+                "character_id": 91234567,
                 "items": [
                     {
                         "item_type_id": 2032,
                         "quantity_destroyed": 1,
-                        "quantity_dropped": null
+                        "quantity_dropped": null,
+                        "flag": 27
                     },
                     {
                         "item_type_id": 2048,
                         "quantity_destroyed": null,
-                        "quantity_dropped": 5
+                        "quantity_dropped": 5,
+                        "flag": 11
                     }
                 ]
             },
+            "attackers": [
+                {
+                    "character_id": 95000001,
+                    "ship_type_id": 24690,
+                    "weapon_type_id": 3170,
+                    "damage_done": 5000,
+                    "final_blow": true
+                }
+            ],
             "zkb": {
                 "hash": "abcdef1234567890",
                 "totalValue": 1500000.50
@@ -342,10 +405,16 @@ mod tests {
         assert_eq!(km.killmail_id, 123456);
         assert_eq!(km.solar_system_id, 30000142);
         assert_eq!(km.victim.ship_type_id, 587);
+        assert_eq!(km.victim.character_id, Some(91234567));
         assert_eq!(km.victim.items.len(), 2);
         assert_eq!(km.victim.items[0].item_type_id, 2032);
         assert_eq!(km.victim.items[0].quantity_destroyed, Some(1));
+        assert_eq!(km.victim.items[0].flag, 27);
         assert_eq!(km.victim.items[1].quantity_dropped, Some(5));
+        assert_eq!(km.victim.items[1].flag, 11);
+        assert_eq!(km.attackers.len(), 1);
+        assert_eq!(km.attackers[0].character_id, Some(95000001));
+        assert_eq!(km.attackers[0].final_blow, true);
         assert_eq!(km.zkb.hash, "abcdef1234567890");
         assert_eq!(km.zkb.total_value, 1500000.50);
     }
