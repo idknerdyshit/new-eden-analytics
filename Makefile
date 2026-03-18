@@ -1,4 +1,4 @@
-.PHONY: up down up-prod down-prod migrate seed-sde seed-market backfill-kills build logs test test-integration analyze clean
+.PHONY: up down up-prod down-prod migrate seed-sde seed-market backfill-kills stop-backfill build logs test test-integration analyze clean
 
 PROD := -f docker-compose.yml -f docker-compose.prod.yml
 
@@ -27,7 +27,10 @@ seed-market:
 	docker compose run --rm --entrypoint /usr/local/bin/market-seed backend-worker
 
 backfill-kills:
-	docker compose run --rm --entrypoint /usr/local/bin/kill-backfill backend-worker
+	docker compose run --rm --name nea-backfill --entrypoint /usr/local/bin/kill-backfill backend-worker
+
+stop-backfill:
+	docker stop nea-backfill
 
 build:
 	docker compose build
