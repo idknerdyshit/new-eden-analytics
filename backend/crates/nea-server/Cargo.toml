@@ -27,7 +27,11 @@ oauth2 = { workspace = true }
 dotenvy = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
-base64 = "0.22"
+jsonwebtoken = { workspace = true }
 nea-db = { workspace = true }
 nea-esi = { workspace = true }
 nea-analysis = { workspace = true }
+
+[dev-dependencies]
+base64 = "0.22"
+rsa = "0.9"

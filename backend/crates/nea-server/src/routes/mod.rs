@@ -14,6 +14,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::json;
+use axum::http::{HeaderValue, Method};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{Instrument, Level};
@@ -37,10 +38,24 @@ async fn request_id_middleware(request: Request, next: Next) -> Response {
     response
 }
 
+fn cors_layer(state: &AppState) -> CorsLayer {
+    if state.domain == "localhost" {
+        CorsLayer::permissive()
+    } else {
+        let origin = format!("https://{}", state.domain);
+        CorsLayer::new()
+            .allow_origin(origin.parse::<HeaderValue>().expect("valid origin"))
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers([axum::http::header::CONTENT_TYPE])
+            .allow_credentials(true)
+    }
+}
+
 pub fn router(state: AppState) -> Router {
+    let cors = cors_layer(&state);
     Router::new()
         .nest("/api", api_router())
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))

@@ -1,6 +1,8 @@
+use jsonwebtoken::jwk::JwkSet;
 use sqlx::PgPool;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -8,7 +10,9 @@ pub struct AppState {
     pub esi_client_id: String,
     pub esi_client_secret: String,
     pub esi_callback_url: String,
-    #[allow(dead_code)]
     pub session_secret: String,
+    pub domain: String,
+    pub secure_cookies: bool,
     pub analysis_running: Arc<AtomicBool>,
+    pub jwks_cache: Arc<RwLock<Option<JwkSet>>>,
 }
