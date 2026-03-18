@@ -119,7 +119,7 @@
 							class="group rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 no-underline transition-colors hover:border-[var(--color-accent-blue)] hover:no-underline"
 						>
 							<div class="mb-2 text-sm font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent-blue)]">
-								Type {entry.type_id}
+								{entry.type_name ?? `Type ${entry.type_id}`}
 							</div>
 							<div class="flex items-end justify-between">
 								<div>

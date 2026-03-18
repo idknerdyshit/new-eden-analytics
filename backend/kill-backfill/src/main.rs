@@ -292,6 +292,7 @@ async fn run_aggregation(
         .into_iter()
         .map(|(type_id, date, qty, count)| DailyDestruction {
             type_id,
+            type_name: None,
             date,
             quantity_destroyed: qty,
             kill_count: count,
@@ -324,6 +325,7 @@ async fn run_aggregation(
         .into_iter()
         .map(|(type_id, date, qty, count)| DailyDestruction {
             type_id,
+            type_name: None,
             date,
             quantity_destroyed: qty,
             kill_count: count,

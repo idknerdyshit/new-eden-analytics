@@ -97,6 +97,8 @@ pub struct KillmailVictim {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct DailyDestruction {
     pub type_id: i32,
+    #[serde(default)]
+    pub type_name: Option<String>,
     pub date: NaiveDate,
     pub quantity_destroyed: i64,
     pub kill_count: i32,

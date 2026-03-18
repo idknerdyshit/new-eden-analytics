@@ -96,6 +96,7 @@ export interface CorrelationResult {
 
 export interface DestructionEntry {
 	type_id: number;
+	type_name: string | null;
 	date: string;
 	quantity_destroyed: number;
 	kill_count: number;

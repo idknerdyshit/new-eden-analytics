@@ -343,10 +343,11 @@ pub async fn get_top_destruction(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, DailyDestruction>(
         r#"
-        SELECT type_id, date, quantity_destroyed, kill_count
-        FROM daily_destruction
-        WHERE date >= CURRENT_DATE - $1 * INTERVAL '1 day'
-        ORDER BY quantity_destroyed DESC
+        SELECT dd.type_id, st.name AS type_name, dd.date, dd.quantity_destroyed, dd.kill_count
+        FROM daily_destruction dd
+        LEFT JOIN sde_types st ON st.type_id = dd.type_id
+        WHERE dd.date >= CURRENT_DATE - $1 * INTERVAL '1 day'
+        ORDER BY dd.quantity_destroyed DESC
         LIMIT $2
         "#,
     )
