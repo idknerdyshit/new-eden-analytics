@@ -10,8 +10,8 @@ use tracing::{info, warn};
 /// Check error budget every N killmails.
 const BATCH_SIZE: usize = 20;
 
-/// Delay between individual ESI requests in milliseconds (~14 req/s).
-const PER_REQUEST_DELAY_MS: u64 = 70;
+/// Delay between individual ESI requests in milliseconds (~2 req/s).
+const PER_REQUEST_DELAY_MS: u64 = 500;
 
 /// Max retries for a single ESI request.
 const MAX_RETRIES: u32 = 5;
