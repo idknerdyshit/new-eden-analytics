@@ -8,23 +8,6 @@ use sqlx::PgPool;
 use tokio::sync::Semaphore;
 use tokio::time;
 
-/// Get the list of tracked type IDs: materials used in manufacturing UNION product types.
-async fn get_tracked_type_ids(pool: &PgPool) -> Result<Vec<i32>, sqlx::Error> {
-    let rows: Vec<(i32,)> = sqlx::query_as(
-        r#"
-        SELECT DISTINCT type_id FROM (
-            SELECT DISTINCT material_type_id AS type_id FROM sde_blueprint_materials
-            UNION
-            SELECT DISTINCT product_type_id AS type_id FROM sde_blueprints
-        ) combined
-        ORDER BY type_id
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().map(|r| r.0).collect())
-}
-
 /// Convert ESI market history entries into DB models.
 fn convert_history(
     type_id: i32,
@@ -57,7 +40,7 @@ pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
         interval.tick().await;
         tracing::info!("market_history: starting fetch cycle");
 
-        let type_ids = match get_tracked_type_ids(&pool).await {
+        let type_ids = match nea_db::get_tracked_type_ids(&pool).await {
             Ok(ids) => ids,
             Err(e) => {
                 tracing::error!("market_history: failed to get tracked type IDs: {e}");

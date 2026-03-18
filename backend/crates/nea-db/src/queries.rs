@@ -94,6 +94,26 @@ pub async fn get_product_materials(
     Ok(rows)
 }
 
+/// Get the list of tracked type IDs: materials used in manufacturing UNION product types.
+pub async fn get_tracked_type_ids(pool: &PgPool) -> Result<Vec<i32>, DbError> {
+    let start = Instant::now();
+    let rows: Vec<(i32,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT type_id FROM (
+            SELECT DISTINCT material_type_id AS type_id FROM sde_blueprint_materials
+            UNION
+            SELECT DISTINCT product_type_id AS type_id FROM sde_blueprints
+        ) combined
+        ORDER BY type_id
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    let ids: Vec<i32> = rows.into_iter().map(|r| r.0).collect();
+    debug!(count = ids.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_tracked_type_ids");
+    Ok(ids)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Market queries
 // ═══════════════════════════════════════════════════════════════════

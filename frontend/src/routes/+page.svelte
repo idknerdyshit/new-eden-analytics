@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { DashboardData, Mover, CorrelationResult, DestructionEntry } from '$lib/api/client';
+	import { correlationColor, formatCorrelation, formatNumber, formatPrice, changeColor, changeArrow } from '$lib/utils/formatters';
 
 	let dashboard = $state<DashboardData | null>(null);
 	let movers = $state<Mover[]>([]);
@@ -23,38 +24,6 @@
 			loading = false;
 		}
 	});
-
-	function correlationColor(value: number): string {
-		if (value > 0) return 'text-[var(--color-accent-blue)]';
-		if (value < 0) return 'text-[var(--color-accent-red)]';
-		return 'text-[var(--color-text-secondary)]';
-	}
-
-	function formatCorrelation(value: number): string {
-		return value.toFixed(4);
-	}
-
-	function formatNumber(value: number): string {
-		if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(1) + 'B';
-		if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + 'M';
-		if (value >= 1_000) return (value / 1_000).toFixed(1) + 'K';
-		return value.toLocaleString();
-	}
-
-	function formatPrice(value: number): string {
-		return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	}
-
-	function changeColor(pct: number): string {
-		if (pct > 0) return 'text-[var(--color-accent-green)]';
-		if (pct < 0) return 'text-[var(--color-accent-red)]';
-		return 'text-[var(--color-text-secondary)]';
-	}
-
-	function changeArrow(pct: number): string {
-		if (pct > 0) return '+';
-		return '';
-	}
 </script>
 
 <div class="space-y-10">

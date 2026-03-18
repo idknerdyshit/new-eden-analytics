@@ -8,23 +8,6 @@ use sqlx::PgPool;
 use tokio::sync::Semaphore;
 use tokio::time;
 
-/// Get the list of tracked type IDs (same as market_history).
-async fn get_tracked_type_ids(pool: &PgPool) -> Result<Vec<i32>, sqlx::Error> {
-    let rows: Vec<(i32,)> = sqlx::query_as(
-        r#"
-        SELECT DISTINCT type_id FROM (
-            SELECT DISTINCT material_type_id AS type_id FROM sde_blueprint_materials
-            UNION
-            SELECT DISTINCT product_type_id AS type_id FROM sde_blueprints
-        ) combined
-        ORDER BY type_id
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().map(|r| r.0).collect())
-}
-
 pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
     tracing::info!("market_orders snapshotter started");
     let mut interval = time::interval(Duration::from_secs(3600));
@@ -33,7 +16,7 @@ pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
         interval.tick().await;
         tracing::info!("market_orders: starting snapshot cycle");
 
-        let type_ids = match get_tracked_type_ids(&pool).await {
+        let type_ids = match nea_db::get_tracked_type_ids(&pool).await {
             Ok(ids) => ids,
             Err(e) => {
                 tracing::error!("market_orders: failed to get tracked type IDs: {e}");

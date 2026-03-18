@@ -19,21 +19,17 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 id
             }
             Err(e) => {
-                tracing::warn!("killmail_poller: failed to parse saved sequence '{val}': {e}, starting from 0");
-                0
+                tracing::warn!("killmail_poller: failed to parse saved sequence '{val}': {e}, fetching current from R2Z2");
+                fetch_starting_sequence(&r2z2).await
             }
         },
         Ok(None) => {
-            tracing::warn!(
-                "killmail_poller: no saved sequence found in worker_state, starting from 0. \
-                 Set worker_state key '{}' to a recent sequence ID for faster catchup.",
-                WORKER_STATE_KEY
-            );
-            0
+            tracing::info!("killmail_poller: no saved sequence, fetching current from R2Z2");
+            fetch_starting_sequence(&r2z2).await
         }
         Err(e) => {
-            tracing::error!("killmail_poller: failed to read worker_state: {e}, starting from 0");
-            0
+            tracing::error!("killmail_poller: failed to read worker_state: {e}, fetching current from R2Z2");
+            fetch_starting_sequence(&r2z2).await
         }
     };
 
@@ -48,7 +44,7 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                     killmail_id: response.killmail_id,
                     kill_time,
                     solar_system_id: Some(response.solar_system_id),
-                    total_value: Some(response.total_value),
+                    total_value: Some(response.zkb.total_value),
                     r2z2_sequence_id: Some(sequence_id),
                 };
 
@@ -61,12 +57,13 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
 
                 // Insert items
                 let items: Vec<KillmailItem> = response
+                    .victim
                     .items
                     .iter()
                     .map(|item| KillmailItem {
                         killmail_id: response.killmail_id,
                         kill_time,
-                        type_id: item.type_id,
+                        type_id: item.item_type_id,
                         quantity_destroyed: item.quantity_destroyed.unwrap_or(0),
                         quantity_dropped: item.quantity_dropped.unwrap_or(0),
                     })
@@ -132,6 +129,19 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 );
                 time::sleep(Duration::from_secs(10)).await;
             }
+        }
+    }
+}
+
+async fn fetch_starting_sequence(r2z2: &R2z2Client) -> i64 {
+    match r2z2.fetch_current_sequence().await {
+        Ok(seq) => {
+            tracing::info!(sequence_id = seq, "fetched current R2Z2 sequence");
+            seq
+        }
+        Err(e) => {
+            tracing::error!("failed to fetch current R2Z2 sequence: {e}, defaulting to 0");
+            0
         }
     }
 }

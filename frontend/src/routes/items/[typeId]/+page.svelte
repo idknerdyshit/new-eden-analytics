@@ -8,6 +8,7 @@
 		DestructionEntry,
 		CorrelationResult
 	} from '$lib/api/client';
+	import { formatCorrelation, correlationColor, formatPValue } from '$lib/utils/formatters';
 	import DestructionChart from '$lib/charts/DestructionChart.svelte';
 	import PriceImpactChart from '$lib/charts/PriceImpactChart.svelte';
 	import CorrelationChart from '$lib/charts/CorrelationChart.svelte';
@@ -74,21 +75,6 @@
 		}
 	}
 
-	function formatCorrelation(value: number): string {
-		return value.toFixed(4);
-	}
-
-	function correlationColor(value: number): string {
-		if (value > 0) return 'text-[var(--color-accent-blue)]';
-		if (value < 0) return 'text-[var(--color-accent-red)]';
-		return 'text-[var(--color-text-secondary)]';
-	}
-
-	function formatPValue(value: number | null): string {
-		if (value === null) return '--';
-		if (value < 0.001) return '< 0.001';
-		return value.toFixed(4);
-	}
 </script>
 
 <div class="space-y-8">

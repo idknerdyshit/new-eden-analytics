@@ -10,8 +10,7 @@ use tracing::debug;
 use crate::error::ApiError;
 use crate::state::AppState;
 use nea_db::{MarketHistory, MarketSnapshot};
-
-const THE_FORGE: i32 = 10000002;
+use nea_esi::THE_FORGE;
 
 #[derive(Deserialize)]
 pub struct HistoryParams {

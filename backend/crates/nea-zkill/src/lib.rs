@@ -29,45 +29,25 @@ pub type Result<T> = std::result::Result<T, ZkillError>;
 // Response types
 // ---------------------------------------------------------------------------
 
+/// R2Z2 ephemeral killmail — ESI-format killmail with zkb metadata block.
 #[derive(Debug, Clone, Deserialize)]
 pub struct R2z2Response {
     pub killmail_id: i64,
-    pub killmail_hash: String,
-    #[serde(default)]
     pub killmail_time: String,
     #[serde(default)]
     pub solar_system_id: i32,
+    pub victim: ZkillVictim,
+    pub zkb: ZkillZkb,
     #[serde(default)]
-    pub total_value: f64,
+    pub sequence_id: Option<i64>,
     #[serde(default)]
-    pub victim: R2z2Victim,
-    #[serde(default)]
-    pub items: Vec<R2z2Item>,
+    pub uploaded_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct R2z2Victim {
-    #[serde(default)]
-    pub ship_type_id: i32,
-    #[serde(default)]
-    pub character_id: Option<i64>,
-    #[serde(default)]
-    pub corporation_id: Option<i64>,
-    #[serde(default)]
-    pub alliance_id: Option<i64>,
-}
-
+/// Response from the R2Z2 `/ephemeral/sequence.json` endpoint.
 #[derive(Debug, Clone, Deserialize)]
-pub struct R2z2Item {
-    pub type_id: i32,
-    #[serde(default)]
-    pub quantity_destroyed: Option<i64>,
-    #[serde(default)]
-    pub quantity_dropped: Option<i64>,
-    #[serde(default)]
-    pub flag: i32,
-    #[serde(default)]
-    pub singleton: i32,
+pub struct R2z2SequenceResponse {
+    pub sequence: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +126,7 @@ impl R2z2Client {
 
         Self {
             client,
-            base_url: "https://r2z2.zkillboard.com/v1".to_string(),
+            base_url: "https://r2z2.zkillboard.com".to_string(),
         }
     }
 
@@ -155,7 +135,7 @@ impl R2z2Client {
     /// Returns `Ok(None)` when the server responds with 404 (no new data yet),
     /// `Ok(Some(response))` on 200, and `Err` for anything else.
     pub async fn fetch_sequence(&self, sequence_id: i64) -> Result<Option<R2z2Response>> {
-        let url = format!("{}/{}.json", self.base_url, sequence_id);
+        let url = format!("{}/ephemeral/{}.json", self.base_url, sequence_id);
         tracing::debug!(url = %url, "fetching R2Z2 sequence");
 
         let response = self.client.get(&url).send().await?;
@@ -181,6 +161,32 @@ impl R2z2Client {
             serde_json::from_str(&body).map_err(|e| ZkillError::Deserialize(e.to_string()))?;
 
         Ok(Some(parsed))
+    }
+
+    /// Fetch the current R2Z2 sequence ID from `/ephemeral/sequence.json`.
+    pub async fn fetch_current_sequence(&self) -> Result<i64> {
+        let url = format!("{}/ephemeral/sequence.json", self.base_url);
+        tracing::debug!(url = %url, "fetching current R2Z2 sequence");
+
+        let response = self.client.get(&url).send().await?;
+        let status = response.status();
+
+        if !status.is_success() {
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "unable to read response body".into());
+            return Err(ZkillError::Api {
+                status: status.as_u16(),
+                message,
+            });
+        }
+
+        let body = response.text().await?;
+        let parsed: R2z2SequenceResponse =
+            serde_json::from_str(&body).map_err(|e| ZkillError::Deserialize(e.to_string()))?;
+
+        Ok(parsed.sequence)
     }
 
     /// Fetch the list of killmail IDs and hashes for a given date (format: `YYYYMMDD`).
@@ -241,47 +247,65 @@ mod tests {
     fn deserialize_response() {
         let json = r#"{
             "killmail_id": 123456,
-            "killmail_hash": "abcdef1234567890",
             "killmail_time": "2026-03-17T12:00:00Z",
             "solar_system_id": 30000142,
-            "total_value": 1500000.50,
             "victim": {
                 "ship_type_id": 587,
-                "character_id": 91234567,
-                "corporation_id": 98000001,
-                "alliance_id": null
+                "items": [
+                    {
+                        "item_type_id": 2032,
+                        "quantity_destroyed": 1,
+                        "quantity_dropped": null
+                    }
+                ]
             },
-            "items": [
-                {
-                    "type_id": 2032,
-                    "quantity_destroyed": 1,
-                    "quantity_dropped": null,
-                    "flag": 27,
-                    "singleton": 0
-                }
-            ]
+            "zkb": {
+                "hash": "abcdef1234567890",
+                "totalValue": 1500000.50
+            },
+            "sequence_id": 42,
+            "uploaded_at": 1710676800
         }"#;
 
         let resp: R2z2Response = serde_json::from_str(json).unwrap();
         assert_eq!(resp.killmail_id, 123456);
-        assert_eq!(resp.killmail_hash, "abcdef1234567890");
+        assert_eq!(resp.zkb.hash, "abcdef1234567890");
+        assert_eq!(resp.zkb.total_value, 1500000.50);
         assert_eq!(resp.victim.ship_type_id, 587);
-        assert_eq!(resp.victim.alliance_id, None);
-        assert_eq!(resp.items.len(), 1);
-        assert_eq!(resp.items[0].quantity_destroyed, Some(1));
+        assert_eq!(resp.victim.items.len(), 1);
+        assert_eq!(resp.victim.items[0].item_type_id, 2032);
+        assert_eq!(resp.victim.items[0].quantity_destroyed, Some(1));
+        assert_eq!(resp.sequence_id, Some(42));
     }
 
     #[test]
     fn deserialize_response_missing_optional_fields() {
         let json = r#"{
             "killmail_id": 999,
-            "killmail_hash": "deadbeef"
+            "killmail_time": "2026-03-17T00:00:00Z",
+            "victim": {
+                "ship_type_id": 0,
+                "items": []
+            },
+            "zkb": {
+                "hash": "deadbeef",
+                "totalValue": 0.0
+            }
         }"#;
 
         let resp: R2z2Response = serde_json::from_str(json).unwrap();
         assert_eq!(resp.killmail_id, 999);
         assert_eq!(resp.victim.ship_type_id, 0);
-        assert!(resp.items.is_empty());
+        assert!(resp.victim.items.is_empty());
+        assert_eq!(resp.sequence_id, None);
+        assert_eq!(resp.uploaded_at, None);
+    }
+
+    #[test]
+    fn deserialize_sequence_response() {
+        let json = r#"{"sequence": 987654}"#;
+        let resp: R2z2SequenceResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.sequence, 987654);
     }
 
     #[test]

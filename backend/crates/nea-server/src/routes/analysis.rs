@@ -21,7 +21,6 @@ pub struct TopParams {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/analysis/:type_id/correlations", get(correlations))
-        .route("/analysis/:type_id/lag", get(lag))
         .route("/analysis/top", get(top))
         .route("/analysis/run", post(run_analysis))
         .route("/analysis/status", get(analysis_status))
@@ -34,16 +33,6 @@ async fn correlations(
 ) -> Result<Json<Vec<CorrelationResult>>, ApiError> {
     let rows = nea_db::get_correlations_for_product(&state.pool, type_id).await?;
     debug!(type_id, results = rows.len(), "correlations");
-    Ok(Json(rows))
-}
-
-#[tracing::instrument(skip(state))]
-async fn lag(
-    State(state): State<AppState>,
-    Path(type_id): Path<i32>,
-) -> Result<Json<Vec<CorrelationResult>>, ApiError> {
-    let rows = nea_db::get_correlations_for_product(&state.pool, type_id).await?;
-    debug!(type_id, results = rows.len(), "lag");
     Ok(Json(rows))
 }
 
