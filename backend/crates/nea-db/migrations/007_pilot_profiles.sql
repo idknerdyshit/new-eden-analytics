@@ -8,17 +8,8 @@ CREATE INDEX IF NOT EXISTS idx_killmail_victims_character
     ON killmail_victims (character_id, kill_time DESC)
     WHERE character_id IS NOT NULL;
 
--- Add unique constraint on victims so backfill can upsert identity fields
--- TimescaleDB requires the partition column (kill_time) in unique constraints
-CREATE UNIQUE INDEX IF NOT EXISTS idx_killmail_victims_unique
-    ON killmail_victims (killmail_id, kill_time);
-
 -- Add item flag column (EVE slot position)
 ALTER TABLE killmail_items ADD COLUMN IF NOT EXISTS flag INTEGER NOT NULL DEFAULT 0;
-
--- Add unique constraint on items so backfill can upsert flag
-CREATE UNIQUE INDEX IF NOT EXISTS idx_killmail_items_unique
-    ON killmail_items (killmail_id, kill_time, type_id, flag);
 
 -- Attacker data (hypertable on kill_time)
 CREATE TABLE IF NOT EXISTS killmail_attackers (
