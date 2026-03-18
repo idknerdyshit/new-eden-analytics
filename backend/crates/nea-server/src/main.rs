@@ -1,9 +1,8 @@
-mod error;
-mod routes;
-mod state;
-
-use state::AppState;
+use nea_server::routes;
+use nea_server::state::AppState;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -43,6 +42,7 @@ async fn main() {
         esi_client_secret,
         esi_callback_url,
         session_secret,
+        analysis_running: Arc::new(AtomicBool::new(false)),
     };
 
     let app = routes::router(state);

@@ -85,7 +85,7 @@ async fn download_all_csvs() -> Result<(), Box<dyn std::error::Error>> {
     tokio::fs::create_dir_all(cache_dir).await?;
 
     let client = reqwest::Client::builder()
-        .user_agent("new-eden-analytics/0.1 sde-import (github.com/new-eden-analytics)")
+        .user_agent("new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)")
         .build()?;
 
     for (i, (filename, url)) in CSV_URLS.iter().enumerate() {

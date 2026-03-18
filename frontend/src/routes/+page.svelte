@@ -106,12 +106,12 @@
 								<tr class="border-b border-[var(--color-border)] transition-colors last:border-b-0 hover:bg-[var(--color-bg-tertiary)]">
 									<td class="px-4 py-3">
 										<a href="/items/{corr.product_type_id}" class="no-underline hover:underline">
-											Type {corr.product_type_id}
+											{corr.product_name}
 										</a>
 									</td>
 									<td class="px-4 py-3">
 										<a href="/items/{corr.material_type_id}" class="no-underline hover:underline">
-											Type {corr.material_type_id}
+											{corr.material_name}
 										</a>
 									</td>
 									<td class="px-4 py-3 text-right text-[var(--color-text-secondary)]">

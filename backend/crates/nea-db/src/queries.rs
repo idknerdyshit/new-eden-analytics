@@ -38,6 +38,25 @@ pub async fn search_types(
     Ok(rows)
 }
 
+pub async fn search_types_count(
+    pool: &PgPool,
+    query: &str,
+) -> Result<i64, DbError> {
+    let start = Instant::now();
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM sde_types
+        WHERE to_tsvector('english', name) @@ plainto_tsquery('english', $1)
+        "#,
+    )
+    .bind(query)
+    .fetch_one(pool)
+    .await?;
+    debug!(query, count, elapsed_ms = start.elapsed().as_millis() as u64, "search_types_count");
+    Ok(count)
+}
+
 pub async fn get_type(pool: &PgPool, type_id: i32) -> Result<Option<SdeType>, DbError> {
     let start = Instant::now();
     let row = sqlx::query_as::<_, SdeType>(
@@ -293,6 +312,80 @@ pub async fn upsert_daily_destruction(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Dashboard queries
+// ═══════════════════════════════════════════════════════════════════
+
+pub async fn get_top_destruction(
+    pool: &PgPool,
+    days: i32,
+    limit: i32,
+) -> Result<Vec<DailyDestruction>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, DailyDestruction>(
+        r#"
+        SELECT type_id, date, quantity_destroyed, kill_count
+        FROM daily_destruction
+        WHERE date >= CURRENT_DATE - $1 * INTERVAL '1 day'
+        ORDER BY quantity_destroyed DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(days)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    debug!(days, limit, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_top_destruction");
+    Ok(rows)
+}
+
+pub async fn get_movers(
+    pool: &PgPool,
+    limit: i32,
+) -> Result<Vec<Mover>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, Mover>(
+        r#"
+        WITH recent AS (
+            SELECT
+                mh.type_id,
+                st.name,
+                mh.date,
+                mh.average,
+                ROW_NUMBER() OVER (PARTITION BY mh.type_id ORDER BY mh.date DESC) AS rn
+            FROM market_history mh
+            JOIN sde_types st ON st.type_id = mh.type_id
+            WHERE mh.region_id = 10000002
+              AND mh.date >= CURRENT_DATE - INTERVAL '3 days'
+        ),
+        pairs AS (
+            SELECT
+                r1.type_id,
+                r1.name,
+                r2.average AS previous_avg,
+                r1.average AS current_avg
+            FROM recent r1
+            JOIN recent r2 ON r1.type_id = r2.type_id AND r2.rn = 2
+            WHERE r1.rn = 1 AND r2.average > 0
+        )
+        SELECT
+            type_id,
+            name,
+            previous_avg,
+            current_avg,
+            ((current_avg - previous_avg) / previous_avg * 100.0) AS change_pct
+        FROM pairs
+        ORDER BY ABS((current_avg - previous_avg) / previous_avg) DESC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    debug!(limit, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_movers");
+    Ok(rows)
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Analysis queries
 // ═══════════════════════════════════════════════════════════════════
 
@@ -340,12 +433,18 @@ pub async fn get_correlations_for_product(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, CorrelationResult>(
         r#"
-        SELECT id, product_type_id, material_type_id, lag_days, correlation_coeff,
-               granger_f_stat, granger_p_value, granger_significant,
-               window_start, window_end, computed_at
-        FROM correlation_results
-        WHERE product_type_id = $1
-        ORDER BY ABS(correlation_coeff) DESC
+        SELECT cr.id, cr.product_type_id,
+               COALESCE(sp.name, 'Type ' || cr.product_type_id) AS product_name,
+               cr.material_type_id,
+               COALESCE(sm.name, 'Type ' || cr.material_type_id) AS material_name,
+               cr.lag_days, cr.correlation_coeff,
+               cr.granger_f_stat, cr.granger_p_value, cr.granger_significant,
+               cr.window_start, cr.window_end, cr.computed_at
+        FROM correlation_results cr
+        LEFT JOIN sde_types sp ON sp.type_id = cr.product_type_id
+        LEFT JOIN sde_types sm ON sm.type_id = cr.material_type_id
+        WHERE cr.product_type_id = $1
+        ORDER BY ABS(cr.correlation_coeff) DESC
         "#,
     )
     .bind(product_type_id)
@@ -362,11 +461,17 @@ pub async fn get_top_correlations(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, CorrelationResult>(
         r#"
-        SELECT id, product_type_id, material_type_id, lag_days, correlation_coeff,
-               granger_f_stat, granger_p_value, granger_significant,
-               window_start, window_end, computed_at
-        FROM correlation_results
-        ORDER BY ABS(correlation_coeff) DESC
+        SELECT cr.id, cr.product_type_id,
+               COALESCE(sp.name, 'Type ' || cr.product_type_id) AS product_name,
+               cr.material_type_id,
+               COALESCE(sm.name, 'Type ' || cr.material_type_id) AS material_name,
+               cr.lag_days, cr.correlation_coeff,
+               cr.granger_f_stat, cr.granger_p_value, cr.granger_significant,
+               cr.window_start, cr.window_end, cr.computed_at
+        FROM correlation_results cr
+        LEFT JOIN sde_types sp ON sp.type_id = cr.product_type_id
+        LEFT JOIN sde_types sm ON sm.type_id = cr.material_type_id
+        ORDER BY ABS(cr.correlation_coeff) DESC
         LIMIT $1
         "#,
     )

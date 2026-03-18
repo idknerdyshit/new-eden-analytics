@@ -50,7 +50,13 @@ pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
         let mut handles = Vec::with_capacity(type_ids.len());
 
         for type_id in &type_ids {
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let permit = match semaphore.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::error!("market_orders: semaphore closed, aborting cycle");
+                    break;
+                }
+            };
             let esi = Arc::clone(&esi);
             let pool = pool.clone();
             let type_id = *type_id;

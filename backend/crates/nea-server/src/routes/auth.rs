@@ -53,6 +53,9 @@ fn build_oauth_client(state: &AppState) -> Result<BasicClient, ApiError> {
 async fn login(State(state): State<AppState>) -> Result<Response, ApiError> {
     let client = build_oauth_client(&state)?;
 
+    // TODO: Store CSRF token in a short-lived cookie and validate it in callback
+    // to prevent CSRF attacks on the OAuth flow. Low-risk for MVP since callback
+    // only creates a session.
     let (auth_url, _csrf_token) = client
         .authorize_url(CsrfToken::new_random)
         .url();
@@ -92,7 +95,8 @@ async fn callback(
         .map(|d| chrono::Utc::now() + chrono::Duration::seconds(d.as_secs() as i64))
         .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
 
-    // We store empty encrypted tokens for now (placeholder - real encryption would use session_secret)
+    // TODO: Encrypt tokens with session_secret using AES-GCM before storing.
+    // Currently stored as plaintext bytes — acceptable for MVP.
     let access_token_enc = access_token.as_bytes();
     let refresh_token_enc = token_result
         .refresh_token()

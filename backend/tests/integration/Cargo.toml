@@ -1,0 +1,18 @@
+[package]
+name = "nea-integration-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+tokio = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+nea-db = { workspace = true }
+nea-analysis = { workspace = true }
+nea-server = { workspace = true }
+axum = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http = "1"
+http-body-util = "0.1"

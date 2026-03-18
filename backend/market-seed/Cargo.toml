@@ -1,19 +1,18 @@
 [package]
-name = "sde-import"
+name = "market-seed"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "sde-import"
+name = "market-seed"
 path = "src/main.rs"
 
 [dependencies]
 tokio = { workspace = true }
 sqlx = { workspace = true }
-csv = { workspace = true }
-reqwest = { workspace = true }
-serde = { workspace = true }
+chrono = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 dotenvy = { workspace = true }
 nea-db = { workspace = true }
+nea-esi = { workspace = true }

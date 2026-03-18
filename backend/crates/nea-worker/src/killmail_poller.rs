@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use nea_db::{Killmail, KillmailItem, KillmailVictim};
 use nea_zkill::R2z2Client;
 use sqlx::PgPool;
@@ -42,7 +41,7 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
         match r2z2.fetch_sequence(sequence_id).await {
             Ok(Some(response)) => {
                 // Parse killmail_time
-                let kill_time = parse_killmail_time(&response.killmail_time);
+                let kill_time = nea_zkill::parse_killmail_time(&response.killmail_time);
 
                 // Insert killmail
                 let km = Killmail {
@@ -137,50 +136,3 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
     }
 }
 
-// Visible to tests
-pub(crate) fn parse_killmail_time(time_str: &str) -> DateTime<Utc> {
-    // Try ISO 8601 format first (e.g. "2026-03-17T12:00:00Z")
-    if let Ok(dt) = time_str.parse::<DateTime<Utc>>() {
-        return dt;
-    }
-    // Try without timezone suffix
-    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H:%M:%S") {
-        return dt.and_utc();
-    }
-    tracing::warn!(
-        time_str,
-        "killmail_poller: failed to parse killmail_time, using now()"
-    );
-    Utc::now()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::{Datelike, Timelike};
-
-    #[test]
-    fn test_parse_killmail_time_iso8601_z() {
-        let dt = parse_killmail_time("2026-03-17T12:00:00Z");
-        assert_eq!(dt.year(), 2026);
-        assert_eq!(dt.month(), 3);
-        assert_eq!(dt.day(), 17);
-        assert_eq!(dt.hour(), 12);
-    }
-
-    #[test]
-    fn test_parse_killmail_time_no_tz() {
-        let dt = parse_killmail_time("2026-03-17T12:00:00");
-        assert_eq!(dt.year(), 2026);
-        assert_eq!(dt.month(), 3);
-        assert_eq!(dt.hour(), 12);
-    }
-
-    #[test]
-    fn test_parse_killmail_time_invalid_fallback() {
-        let before = Utc::now();
-        let dt = parse_killmail_time("garbage");
-        let after = Utc::now();
-        assert!(dt >= before && dt <= after);
-    }
-}

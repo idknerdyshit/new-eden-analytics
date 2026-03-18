@@ -47,6 +47,7 @@ export interface SearchResult {
 	items: SdeType[];
 	page: number;
 	per_page: number;
+	total: number;
 }
 
 export interface ItemDetail {
@@ -80,7 +81,9 @@ export interface MarketSnapshot {
 export interface CorrelationResult {
 	id: number;
 	product_type_id: number;
+	product_name: string;
 	material_type_id: number;
+	material_name: string;
 	lag_days: number;
 	correlation_coeff: number;
 	granger_f_stat: number | null;
@@ -101,26 +104,37 @@ export interface DestructionEntry {
 export interface User {
 	character_id: number;
 	character_name: string;
-	token_expires_at: string | null;
-	created_at: string;
-	updated_at: string;
 }
 
 // ── Fetch Wrapper ──
 
+class ApiError extends Error {
+	status: number;
+	constructor(status: number, message: string) {
+		super(message);
+		this.status = status;
+	}
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 	log.debug(`fetch ${path}`);
 	const start = performance.now();
-	const res = await fetch(`${BASE}${path}`, init);
-	const elapsed = Math.round(performance.now() - start);
-	const requestId = res.headers.get('x-request-id');
-	if (!res.ok) {
-		const body = await res.text();
-		log.error(`fetch ${path} failed`, { status: res.status, elapsed, requestId, body });
-		throw new Error(`API ${res.status}: ${body}`);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 30_000);
+	try {
+		const res = await fetch(`${BASE}${path}`, { ...init, signal: controller.signal });
+		const elapsed = Math.round(performance.now() - start);
+		const requestId = res.headers.get('x-request-id');
+		if (!res.ok) {
+			const body = await res.text();
+			log.error(`fetch ${path} failed`, { status: res.status, elapsed, requestId, body });
+			throw new ApiError(res.status, `API ${res.status}: ${body}`);
+		}
+		log.debug(`fetch ${path} complete`, { status: res.status, elapsed, requestId });
+		return res.json();
+	} finally {
+		clearTimeout(timeout);
 	}
-	log.debug(`fetch ${path} complete`, { status: res.status, elapsed, requestId });
-	return res.json();
 }
 
 export const api = {
@@ -139,5 +153,14 @@ export const api = {
 		fetchJson<CorrelationResult[]>(`/analysis/top?limit=${limit}`),
 	destruction: (typeId: number, days = 90) =>
 		fetchJson<DestructionEntry[]>(`/destruction/${typeId}?days=${days}`),
-	authMe: () => fetchJson<User | null>('/auth/me')
+	authMe: async (): Promise<User | null> => {
+		try {
+			return await fetchJson<User>('/auth/me');
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 401) {
+				return null;
+			}
+			throw e;
+		}
+	}
 };

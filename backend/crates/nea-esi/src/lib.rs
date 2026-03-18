@@ -16,7 +16,7 @@ use tracing::{debug, warn};
 pub const BASE_URL: &str = "https://esi.evetech.net/latest";
 pub const THE_FORGE: i32 = 10000002;
 pub const JITA_STATION: i64 = 60003760;
-pub const USER_AGENT: &str = "new-eden-analytics/0.1 (github.com/new-eden-analytics)";
+pub const USER_AGENT: &str = "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)";
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -35,6 +35,9 @@ pub enum EsiError {
 
     #[error("Deserialization error: {0}")]
     Deserialize(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 pub type Result<T> = std::result::Result<T, EsiError>;
@@ -158,7 +161,7 @@ impl EsiClient {
             .semaphore
             .acquire()
             .await
-            .expect("semaphore closed unexpectedly");
+            .map_err(|_| EsiError::Internal("rate-limit semaphore closed".into()))?;
 
         // If the error budget is very low, back off briefly.
         let budget = self.error_budget.load(Ordering::Relaxed);

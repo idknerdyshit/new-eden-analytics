@@ -21,8 +21,14 @@
 	let correlations = $state<CorrelationResult[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let warnings = $state<string[]>([]);
 
 	onMount(() => {
+		if (isNaN(typeId) || typeId <= 0) {
+			error = `Invalid item ID: "${$page.params.typeId}"`;
+			loading = false;
+			return;
+		}
 		loadData();
 	});
 
@@ -40,21 +46,26 @@
 			if (itemData.status === 'fulfilled') item = itemData.value;
 			else throw new Error('Failed to load item');
 
+			const loadWarnings: string[] = [];
 			if (historyData.status === 'fulfilled') {
 				marketHistory = historyData.value;
 			} else {
 				console.warn('[nea] partial load failure: marketHistory', historyData.reason);
+				loadWarnings.push('Market history data unavailable');
 			}
 			if (destructionData.status === 'fulfilled') {
 				destruction = destructionData.value;
 			} else {
 				console.warn('[nea] partial load failure: destruction', destructionData.reason);
+				loadWarnings.push('Destruction data unavailable');
 			}
 			if (corrData.status === 'fulfilled') {
 				correlations = corrData.value;
 			} else {
 				console.warn('[nea] partial load failure: correlations', corrData.reason);
+				loadWarnings.push('Correlation data unavailable');
 			}
+			warnings = loadWarnings;
 		} catch (e) {
 			console.error('[nea] item detail load failed', e);
 			error = e instanceof Error ? e.message : 'Failed to load item data';
@@ -140,6 +151,14 @@
 			{/if}
 		</section>
 
+		{#if warnings.length > 0}
+			<div class="rounded-lg border border-[var(--color-accent-yellow,#d29922)] bg-[var(--color-bg-secondary)] p-4">
+				{#each warnings as warning}
+					<p class="text-sm text-[var(--color-accent-yellow,#d29922)]">{warning}</p>
+				{/each}
+			</div>
+		{/if}
+
 		<!-- Charts -->
 		<section>
 			<h2 class="mb-4 text-lg font-semibold">Charts</h2>
@@ -200,7 +219,7 @@
 				<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
 					<LagTimeline
 						correlations={correlations.map((c) => ({
-							material_name: `Type ${c.material_type_id}`,
+							material_name: c.material_name,
 							lag_days: c.lag_days,
 							correlation_coeff: c.correlation_coeff,
 							granger_significant: c.granger_significant

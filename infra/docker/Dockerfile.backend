@@ -19,9 +19,11 @@ RUN cargo build --release
 # ── nea-server runtime ─────────────────────────────────────────────
 FROM debian:bookworm-slim AS nea-server
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 libpq5 \
+    ca-certificates libssl3 libpq5 curl \
     && rm -rf /var/lib/apt/lists/*
+RUN useradd -r -s /bin/false nea
 COPY --from=builder /app/target/release/nea-server /usr/local/bin/nea-server
+USER nea
 EXPOSE 3001
 ENTRYPOINT ["nea-server"]
 
@@ -30,7 +32,10 @@ FROM debian:bookworm-slim AS nea-worker
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libssl3 libpq5 \
     && rm -rf /var/lib/apt/lists/*
+RUN useradd -r -s /bin/false nea
 COPY --from=builder /app/target/release/nea-worker /usr/local/bin/nea-worker
 COPY --from=builder /app/target/release/sde-import /usr/local/bin/sde-import
 COPY --from=builder /app/target/release/kill-backfill /usr/local/bin/kill-backfill
+COPY --from=builder /app/target/release/market-seed /usr/local/bin/market-seed
+USER nea
 ENTRYPOINT ["nea-worker"]

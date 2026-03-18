@@ -10,6 +10,7 @@
 	let { children } = $props();
 
 	let currentUser = $state<User | null>(null);
+	let authError = $state<string | null>(null);
 
 	onMount(async () => {
 		try {
@@ -20,6 +21,7 @@
 			console.warn('[nea] auth check failed', e);
 			currentUser = null;
 			user.set(null);
+			authError = 'Could not connect to backend';
 		}
 	});
 
@@ -57,7 +59,9 @@
 			</div>
 		</div>
 		<div class="flex items-center gap-4">
-			{#if currentUser}
+			{#if authError}
+				<span class="text-sm text-[var(--color-accent-red)]">{authError}</span>
+			{:else if currentUser}
 				<span class="text-sm text-[var(--color-text-secondary)]">
 					{currentUser.character_name}
 				</span>

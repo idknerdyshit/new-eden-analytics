@@ -1,37 +1,20 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate, Utc};
 use nea_db::models::*;
 use nea_esi::EsiClient;
 use nea_zkill::R2z2Client;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
-/// Max concurrent ESI requests.
-const ESI_CONCURRENCY: usize = 5;
+/// Check error budget every N killmails.
+const BATCH_SIZE: usize = 20;
 
-/// Batch size — process this many killmails, then pause briefly.
-const BATCH_SIZE: usize = 50;
-
-/// Delay between batches in milliseconds.
-const BATCH_DELAY_MS: u64 = 1000;
+/// Delay between individual ESI requests in milliseconds (~14 req/s).
+const PER_REQUEST_DELAY_MS: u64 = 70;
 
 /// Max retries for a single ESI request.
-const MAX_RETRIES: u32 = 3;
-
-/// Parse a killmail timestamp string into a `DateTime<Utc>`.
-///
-/// Duplicated from nea-worker to avoid a dependency on that crate.
-fn parse_killmail_time(time_str: &str) -> DateTime<Utc> {
-    if let Ok(dt) = time_str.parse::<DateTime<Utc>>() {
-        return dt;
-    }
-    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H:%M:%S") {
-        return dt.and_utc();
-    }
-    warn!(time_str, "failed to parse killmail_time, using now()");
-    Utc::now()
-}
+const MAX_RETRIES: u32 = 5;
 
 /// Parse `--days N` from CLI args, defaulting to 90.
 fn parse_days_arg() -> i64 {
@@ -95,7 +78,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "backfilling killmails"
     );
 
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(ESI_CONCURRENCY));
     let mut total_inserted: u64 = 0;
 
     let mut current_date = start_date;
@@ -117,49 +99,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut date_inserted: u64 = 0;
         let mut date_errors: u64 = 0;
 
-        // Process in batches to avoid overwhelming ESI.
-        for (batch_idx, batch) in pairs.chunks(BATCH_SIZE).enumerate() {
-            // Check ESI error budget before each batch — pause if low.
-            let budget = esi.error_budget();
-            if budget < 10 {
-                warn!(budget, "ESI error budget critically low, pausing 60s");
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            } else if budget < 30 {
-                warn!(budget, "ESI error budget low, pausing 10s");
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        // Process killmails sequentially with a delay between each request.
+        // ESI rate limits are strict; concurrent bursts trigger 429s quickly.
+        for (i, (km_id, km_hash)) in pairs.iter().enumerate() {
+            // Check ESI error budget periodically — pause longer if low.
+            if i % BATCH_SIZE == 0 && i > 0 {
+                let budget = esi.error_budget();
+                if budget < 10 {
+                    warn!(budget, "ESI error budget critically low, pausing 60s");
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                } else if budget < 30 {
+                    warn!(budget, "ESI error budget low, pausing 10s");
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                }
+
+                info!(
+                    date = %current_date,
+                    progress = format!("{}/{}", i, pairs.len()),
+                    inserted = date_inserted,
+                    errors = date_errors,
+                    "batch progress"
+                );
             }
 
-            let mut handles = Vec::with_capacity(batch.len());
-            for (km_id, km_hash) in batch {
-                let permit = semaphore.clone().acquire_owned().await?;
-                let esi = Arc::clone(&esi);
-                let pool = pool.clone();
-                let km_id = *km_id;
-                let km_hash = km_hash.clone();
-
-                handles.push(tokio::spawn(async move {
-                    let _permit = permit;
-                    process_killmail_with_retry(&esi, &pool, km_id, &km_hash).await
-                }));
-            }
-
-            for handle in handles {
-                match handle.await? {
-                    Ok(true) => date_inserted += 1,
-                    Ok(false) => {} // already existed or skipped
-                    Err(e) => {
-                        date_errors += 1;
-                        if date_errors <= 5 {
-                            warn!(error = %e, "failed to process killmail");
-                        }
+            match process_killmail_with_retry(&esi, &pool, *km_id, km_hash).await {
+                Ok(true) => date_inserted += 1,
+                Ok(false) => {}
+                Err(e) => {
+                    date_errors += 1;
+                    if date_errors <= 5 {
+                        warn!(error = %e, "failed to process killmail");
                     }
                 }
             }
 
-            // Brief pause between batches.
-            if batch_idx < pairs.len() / BATCH_SIZE {
-                tokio::time::sleep(std::time::Duration::from_millis(BATCH_DELAY_MS)).await;
-            }
+            // Pace requests: 70ms between each call (~14 req/s, under 15 req/s limit).
+            tokio::time::sleep(std::time::Duration::from_millis(PER_REQUEST_DELAY_MS)).await;
         }
 
         total_inserted += date_inserted;
@@ -246,7 +221,7 @@ async fn process_killmail(
     killmail_hash: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let km = esi.get_killmail_typed(killmail_id, killmail_hash).await?;
-    let kill_time = parse_killmail_time(&km.killmail_time);
+    let kill_time = nea_zkill::parse_killmail_time(&km.killmail_time);
 
     let killmail = Killmail {
         killmail_id: km.killmail_id,

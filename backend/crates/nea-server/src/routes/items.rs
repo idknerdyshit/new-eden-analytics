@@ -23,6 +23,7 @@ pub struct PaginatedItems {
     pub items: Vec<SdeType>,
     pub page: i32,
     pub per_page: i32,
+    pub total: i64,
 }
 
 #[derive(Serialize)]
@@ -52,16 +53,21 @@ async fn search_items(
             items: vec![],
             page,
             per_page,
+            total: 0,
         }));
     }
 
-    let items = nea_db::search_types(&state.pool, &q, per_page, offset).await?;
+    let (items, total) = tokio::try_join!(
+        nea_db::search_types(&state.pool, &q, per_page, offset),
+        nea_db::search_types_count(&state.pool, &q),
+    )?;
 
-    info!(query = %q, results = items.len(), page, "search_items");
+    info!(query = %q, results = items.len(), total, page, "search_items");
     Ok(Json(PaginatedItems {
         items,
         page,
         per_page,
+        total,
     }))
 }
 

@@ -21,6 +21,50 @@ async fn main() {
         )
         .init();
 
+    let args: Vec<String> = std::env::args().collect();
+    let run_once = args.get(1).map(|s| s.as_str()) == Some("--run-once");
+    let run_once_task = args.get(2).map(|s| s.as_str());
+
+    if run_once {
+        match run_once_task {
+            Some("analyzer") => {
+                tracing::info!("nea-worker: running analyzer once");
+
+                let database_url =
+                    std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+                let pool = nea_db::create_pool(&database_url)
+                    .await
+                    .expect("failed to create database pool");
+                nea_db::run_migrations(&pool)
+                    .await
+                    .expect("failed to run database migrations");
+
+                match nea_analysis::runner::run_analysis(&pool, nea_esi::THE_FORGE).await {
+                    Ok(stats) => {
+                        tracing::info!(
+                            pairs_analyzed = stats.pairs_analyzed,
+                            significant = stats.significant,
+                            "analyzer: cycle complete"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("analyzer: failed: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+            Some(other) => {
+                tracing::error!("unknown task for --run-once: {other}");
+                std::process::exit(1);
+            }
+            None => {
+                tracing::error!("--run-once requires a task name (e.g., 'analyzer')");
+                std::process::exit(1);
+            }
+        }
+    }
+
     tracing::info!("nea-worker starting");
 
     // Database pool

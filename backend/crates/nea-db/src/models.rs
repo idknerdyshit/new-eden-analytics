@@ -102,13 +102,26 @@ pub struct DailyDestruction {
     pub kill_count: i32,
 }
 
+// ── Dashboard ──
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Mover {
+    pub type_id: i32,
+    pub name: String,
+    pub previous_avg: f64,
+    pub current_avg: f64,
+    pub change_pct: f64,
+}
+
 // ── Analysis ──
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CorrelationResult {
     pub id: i32,
     pub product_type_id: i32,
+    pub product_name: String,
     pub material_type_id: i32,
+    pub material_name: String,
     pub lag_days: i32,
     pub correlation_coeff: f64,
     pub granger_f_stat: Option<f64>,

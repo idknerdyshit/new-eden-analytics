@@ -37,6 +37,7 @@
 			const data = await api.searchItems(q, currentPage);
 			results = data.items;
 			perPage = data.per_page;
+			totalResults = data.total;
 		} catch (e) {
 			console.error('[nea] search failed', e);
 			error = e instanceof Error ? e.message : 'Search failed';
@@ -51,7 +52,7 @@
 		await performSearch();
 	}
 
-	let hasNextPage = $derived(results.length === perPage);
+	let hasNextPage = $derived(currentPage * perPage < totalResults);
 	let hasPrevPage = $derived(currentPage > 1);
 </script>
 

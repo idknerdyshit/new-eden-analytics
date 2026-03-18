@@ -1,4 +1,6 @@
 use sqlx::PgPool;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -8,4 +10,5 @@ pub struct AppState {
     pub esi_callback_url: String,
     #[allow(dead_code)]
     pub session_secret: String,
+    pub analysis_running: Arc<AtomicBool>,
 }

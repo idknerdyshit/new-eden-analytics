@@ -6,11 +6,14 @@ pub mod items;
 pub mod market;
 
 use axum::{
-    extract::Request,
+    extract::{Request, State},
+    http::StatusCode,
     middleware::{self, Next},
-    response::Response,
-    Router,
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
 };
+use serde_json::json;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{Instrument, Level};
@@ -49,10 +52,21 @@ pub fn router(state: AppState) -> Router {
 
 fn api_router() -> Router<AppState> {
     Router::new()
+        .route("/health", get(health))
         .merge(dashboard::routes())
         .merge(items::routes())
         .merge(market::routes())
         .merge(analysis::routes())
         .merge(destruction::routes())
         .merge(auth::routes())
+}
+
+async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    match sqlx::query("SELECT 1").execute(&state.pool).await {
+        Ok(_) => (StatusCode::OK, Json(json!({"status": "ok"}))),
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"status": "error", "message": "database unavailable"})),
+        ),
+    }
 }

@@ -1,5 +1,6 @@
 // nea-zkill: Client for the zKillboard R2Z2 API (RedisQ replacement).
 
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -70,6 +71,62 @@ pub struct R2z2Item {
 }
 
 // ---------------------------------------------------------------------------
+// zKillboard kills API types (ESI-format killmail + zkb metadata)
+// ---------------------------------------------------------------------------
+
+/// A single killmail from the zKillboard kills API.
+/// Items are nested under `victim` (ESI format), and zkb metadata is separate.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ZkillKillmail {
+    pub killmail_id: i64,
+    pub killmail_time: String,
+    pub solar_system_id: i32,
+    pub victim: ZkillVictim,
+    pub zkb: ZkillZkb,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ZkillVictim {
+    pub ship_type_id: i32,
+    #[serde(default)]
+    pub items: Vec<ZkillItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ZkillItem {
+    pub item_type_id: i32,
+    #[serde(default)]
+    pub quantity_destroyed: Option<i64>,
+    #[serde(default)]
+    pub quantity_dropped: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ZkillZkb {
+    pub hash: String,
+    #[serde(rename = "totalValue")]
+    pub total_value: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+/// Parse a killmail timestamp string into a `DateTime<Utc>`.
+///
+/// Handles both ISO 8601 with Z suffix and bare datetime strings.
+pub fn parse_killmail_time(time_str: &str) -> DateTime<Utc> {
+    if let Ok(dt) = time_str.parse::<DateTime<Utc>>() {
+        return dt;
+    }
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H:%M:%S") {
+        return dt.and_utc();
+    }
+    tracing::warn!(time_str, "failed to parse killmail_time, using now()");
+    Utc::now()
+}
+
+// ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
 
@@ -82,7 +139,7 @@ impl R2z2Client {
     /// Create a new R2Z2 client with sensible defaults.
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
-            .user_agent("new-eden-analytics/0.1 (https://github.com/eyedeekay/new-eden-analytics)")
+            .user_agent("new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)")
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .expect("failed to build reqwest client");
@@ -167,6 +224,7 @@ impl R2z2Client {
 
         Ok(pairs)
     }
+
 }
 
 impl Default for R2z2Client {
@@ -224,6 +282,74 @@ mod tests {
         assert_eq!(resp.killmail_id, 999);
         assert_eq!(resp.victim.ship_type_id, 0);
         assert!(resp.items.is_empty());
+    }
+
+    #[test]
+    fn deserialize_zkill_killmail() {
+        let json = r#"[{
+            "killmail_id": 123456,
+            "killmail_time": "2026-03-17T12:00:00Z",
+            "solar_system_id": 30000142,
+            "victim": {
+                "ship_type_id": 587,
+                "items": [
+                    {
+                        "item_type_id": 2032,
+                        "quantity_destroyed": 1,
+                        "quantity_dropped": null
+                    },
+                    {
+                        "item_type_id": 2048,
+                        "quantity_destroyed": null,
+                        "quantity_dropped": 5
+                    }
+                ]
+            },
+            "zkb": {
+                "hash": "abcdef1234567890",
+                "totalValue": 1500000.50
+            }
+        }]"#;
+
+        let kills: Vec<ZkillKillmail> = serde_json::from_str(json).unwrap();
+        assert_eq!(kills.len(), 1);
+        let km = &kills[0];
+        assert_eq!(km.killmail_id, 123456);
+        assert_eq!(km.solar_system_id, 30000142);
+        assert_eq!(km.victim.ship_type_id, 587);
+        assert_eq!(km.victim.items.len(), 2);
+        assert_eq!(km.victim.items[0].item_type_id, 2032);
+        assert_eq!(km.victim.items[0].quantity_destroyed, Some(1));
+        assert_eq!(km.victim.items[1].quantity_dropped, Some(5));
+        assert_eq!(km.zkb.hash, "abcdef1234567890");
+        assert_eq!(km.zkb.total_value, 1500000.50);
+    }
+
+    #[test]
+    fn test_parse_killmail_time_iso8601_z() {
+        use chrono::{Datelike, Timelike};
+        let dt = parse_killmail_time("2026-03-17T12:00:00Z");
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 3);
+        assert_eq!(dt.day(), 17);
+        assert_eq!(dt.hour(), 12);
+    }
+
+    #[test]
+    fn test_parse_killmail_time_no_tz() {
+        use chrono::{Datelike, Timelike};
+        let dt = parse_killmail_time("2026-03-17T12:00:00");
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 3);
+        assert_eq!(dt.hour(), 12);
+    }
+
+    #[test]
+    fn test_parse_killmail_time_invalid_fallback() {
+        let before = chrono::Utc::now();
+        let dt = parse_killmail_time("garbage");
+        let after = chrono::Utc::now();
+        assert!(dt >= before && dt <= after);
     }
 
     #[test]

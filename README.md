@@ -1,210 +1,92 @@
 # New Eden Analytics
 
-An EVE Online market analytics platform that detects and quantifies correlations between ship/item destruction and raw material price movements. Uses cross-correlation and Granger causality to identify lag times between destruction events and market impact.
-
-## Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- [Rust](https://rustup.rs/) (1.75+) — for local backend development
-- [Node.js](https://nodejs.org/) (20+) — for local frontend development
-- An EVE Online account — for SSO API keys
-
-## API Keys
-
-### EVE SSO (required for auth features)
-
-1. Go to [EVE Developer Portal](https://developers.eveonline.com/applications)
-2. Create a new application
-3. Set the callback URL to `http://localhost:3000/api/auth/callback` (or your deployment URL)
-4. No scopes are needed for the MVP (public market data only)
-5. Note your **Client ID** and **Secret Key**
-
-### ESI (EVE Swagger Interface)
-
-No API key required. ESI public endpoints are used for market data. The app respects ESI rate limits via the `X-ESI-Error-Limit-Remain` header.
-
-### zKillboard R2Z2
-
-No API key required. The R2Z2 endpoint is public. A User-Agent header is sent per zKillboard's request.
-
-## Setup
-
-### 1. Clone and configure
-
-```bash
-git clone https://github.com/your-username/new-eden-analytics.git
-cd new-eden-analytics
-cp .env.example .env
-```
-
-Edit `.env` with your values:
-
-```env
-# Domain & TLS (set DOMAIN to your real hostname for production)
-DOMAIN=localhost
-ACME_EMAIL=you@example.com
-
-# Database
-DATABASE_URL=postgres://nea:nea_password@localhost:5432/new_eden_analytics
-POSTGRES_USER=nea
-POSTGRES_PASSWORD=nea_password
-POSTGRES_DB=new_eden_analytics
-
-# EVE SSO
-ESI_CLIENT_ID=your_eve_client_id
-ESI_CLIENT_SECRET=your_eve_secret_key
-ESI_CALLBACK_URL=http://localhost:3000/api/auth/callback
-
-# Session
-SESSION_SECRET=generate_a_random_64_char_string_here
-
-# Logging
-RUST_LOG=info
-```
-
-### 2. Run with Docker Compose (recommended)
-
-```bash
-# Start everything (TimescaleDB, backend server, worker, frontend)
-make up
-
-# Or directly:
-docker compose up -d
-```
-
-This starts all services behind Traefik on **http://localhost:3000** (plain HTTP, no TLS).
-
-For **production** with TLS:
-
-```bash
-# Set DOMAIN and ACME_EMAIL in .env, then:
-make up-prod
-```
-
-This binds ports 80/443 with automatic Let's Encrypt certificates and HTTP→HTTPS redirect.
-
-### 3. Import SDE data
-
-The Static Data Export (ship/item definitions, blueprints) must be imported once:
-
-```bash
-make seed-sde
-
-# Or manually:
-docker compose exec backend-worker /usr/local/bin/sde-import
-```
-
-This downloads ~50MB of CSV data from Fuzzwork and imports ~40k+ item types and blueprint data. Takes 2-5 minutes.
-
-### 4. Backfill historical kill data (optional)
-
-To seed ~90 days of historical killmail data from zKillboard (improves correlation analysis on first run):
-
-```bash
-make backfill-kills
-```
-
-This is resumable — if interrupted, re-running picks up where it left off. Use `--days N` to control the backfill depth (default 90). Takes a while due to API rate limits.
-
-### 5. Open the app
-
-Visit [http://localhost:3000](http://localhost:3000)
-
-The dashboard will be empty until workers have collected data. Market history starts flowing within the first hour. Kill data streams in real-time. Correlation analysis runs daily at 02:00 UTC (needs several days of data).
-
-## Local Development
-
-### Backend
-
-```bash
-cd backend
-
-# Check that it compiles
-cargo check
-
-# Run the API server
-cargo run -p nea-server
-
-# Run the background worker
-cargo run -p nea-worker
-
-# Run the SDE import
-cargo run -p sde-import
-```
-
-Requires a running TimescaleDB instance (start just the DB with `docker compose up timescaledb -d`).
-
-### Frontend
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Run dev server (proxies /api to localhost:3001)
-npm run dev
-
-# Type check
-npx svelte-check
-
-# Production build
-npm run build
-```
+EVE Online market analytics platform that correlates ship and item destruction with raw material price movements. Uses cross-correlation and Granger causality analysis over 180-day windows to identify statistically significant lead/lag relationships between destruction events and price changes in The Forge (Jita).
 
 ## Architecture
 
-```
-                    ┌───────────┐
-          :80/:443  │  Traefik  │  TLS (Let's Encrypt)
-                    └─────┬─────┘
-                    ┌─────┴─────┐
-                /   │           │  /api
-       ┌────────────┴┐     ┌───┴──────────┐     ┌─────────────────┐
-       │   Frontend   │     │  API Server  │────▶│   TimescaleDB   │
-       │  (SvelteKit) │     │   (Axum)     │     │  (PostgreSQL)   │
-       └──────────────┘     └──────────────┘     └────────▲────────┘
-                                                          │
-                            ┌──────────────┐              │
-                            │    Worker    │──────────────┘
-                            │  (Tokio)    │
-                            └──────┬───────┘
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-         ┌────────┐  ┌──────────┐  ┌──────────┐
-         │  ESI   │  │   R2Z2   │  │ Fuzzwork │
-         │(market)│  │ (kills)  │  │  (SDE)   │
-         └────────┘  └──────────┘  └──────────┘
-```
+Five services orchestrated by Docker Compose:
 
-- **nea-server**: Axum HTTP API with 12 endpoints (dashboard, search, market data, analysis, auth)
-- **nea-worker**: 5 background tasks (market history, order snapshots, killmail polling, daily aggregation, correlation analysis)
-- **nea-db**: Shared database layer with sqlx migrations
-- **nea-esi**: ESI API client with rate limiting and pagination
-- **nea-zkill**: zKillboard R2Z2 sequential polling client
-- **nea-analysis**: Cross-correlation and Granger causality statistical analysis
-- **kill-backfill**: One-shot CLI tool to backfill historical killmails from zKillboard + ESI
+| Service | Port | Description |
+|---------|------|-------------|
+| `traefik` | 3000 (dev) / 80+443 (prod) | Reverse proxy — plain HTTP locally, TLS via Let's Encrypt in prod |
+| `timescaledb` | 5432 (dev) | TimescaleDB (PostgreSQL 16) — all persistent state |
+| `backend-server` | 3001 (internal) | Axum HTTP API (routed via Traefik at `/api`) |
+| `backend-worker` | — | Background data ingestion + analysis |
+| `frontend` | 3000 (internal) | SvelteKit SSR app (routed via Traefik at `/`) |
+
+## Quick Start
+
+```bash
+cp .env.example .env   # fill in ESI_CLIENT_ID, ESI_CLIENT_SECRET, SESSION_SECRET
+make up                # docker compose up -d
+make seed-sde          # one-time SDE import (~2-5 min)
+# visit http://localhost:3000
+```
 
 ## Makefile Commands
 
 | Command | Description |
 |---------|-------------|
-| `make up` | Start all services (local dev, HTTP on :3000) |
-| `make down` | Stop all services |
-| `make up-prod` | Start production (TLS on :443 via Let's Encrypt) |
-| `make down-prod` | Stop production |
+| `make up` / `make down` | Start/stop all services (local dev, HTTP on :3000) |
+| `make up-prod` / `make down-prod` | Start/stop production (TLS on :443 via Let's Encrypt) |
 | `make build` | Rebuild Docker images |
-| `make logs` | Tail logs from all services |
-| `make migrate` | Run database migrations |
-| `make seed-sde` | Import EVE static data |
-| `make backfill-kills` | Backfill ~90 days of historical killmails from zKillboard |
+| `make logs` | Tail all service logs |
+| `make seed-sde` | Import EVE static data (item types, blueprints) |
+| `make backfill-kills` | Backfill ~90 days of historical killmails (resumable) |
+| `make migrate` | Run DB migrations |
+| `make test` | Run backend unit tests |
+| `make clean` | Full reset: removes containers, volumes, and images |
+
+## Environment Variables
+
+Defined in `.env` (copy from `.env.example`):
+
+| Variable | Description |
+|----------|-------------|
+| `DOMAIN` | Public hostname for Traefik routing and TLS cert (default: `localhost`) |
+| `ACME_EMAIL` | Email for Let's Encrypt certificate registration |
+| `DATABASE_URL` | Postgres connection string |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Used by TimescaleDB container |
+| `ESI_CLIENT_ID`, `ESI_CLIENT_SECRET`, `ESI_CALLBACK_URL` | EVE SSO OAuth2 credentials |
+| `SESSION_SECRET` | Cookie signing key |
+| `RUST_LOG` | Tracing filter (default: `info`) |
 
 ## Data Flow
 
-1. **SDE Import** (one-time): Item types, blueprints, and material requirements from Fuzzwork CSVs
-2. **Market History** (hourly): Daily OHLCV data for The Forge region from ESI
-3. **Order Snapshots** (hourly): Best bid/ask prices at Jita 4-4 from ESI
-4. **Killmails** (real-time): Ship and item destruction data from zKillboard R2Z2
-5. **Daily Aggregation** (hourly): Rolls up killmail data into daily destruction volumes
-6. **Correlation Analysis** (daily at 02:00 UTC): Computes cross-correlation and Granger causality for all product-material pairs over 180-day windows
+1. **SDE Import** (one-time) — item types and blueprints from Fuzzwork CSVs
+2. **Market History** (hourly) — daily OHLCV for The Forge from ESI
+3. **Order Snapshots** (hourly) — best bid/ask at Jita 4-4 from ESI
+4. **Killmails** (continuous) — destruction data from zKillboard R2Z2
+5. **Daily Aggregation** (hourly) — rolls up killmails into daily destruction volumes
+6. **Correlation Analysis** (daily 02:00 UTC) — cross-correlation + Granger causality over 180-day windows
+
+## Data Retention
+
+TimescaleDB compression and retention policies are applied automatically:
+
+| Table | Compression | Retention |
+|-------|-------------|-----------|
+| `market_history` | 30 days | None (historically valuable) |
+| `market_snapshots` | 30 days | 1 year |
+| `killmails` | 30 days | 1 year |
+| `killmail_items` | 30 days | 1 year |
+| `killmail_victims` | 30 days | 1 year |
+| `daily_destruction` | 30 days | None (pre-aggregated, small) |
+
+## Health Check
+
+```
+GET /api/health → {"status": "ok"}
+```
+
+Returns 200 when the API server and database are healthy, 503 otherwise.
+
+## External APIs
+
+- **ESI** (esi.evetech.net) — no API key, rate-limited via `X-ESI-Error-Limit-Remain` header
+- **R2Z2/zKillboard** — no API key, sequential polling with User-Agent header
+- **Fuzzwork** — CSV downloads for SDE data, used only during seed
+
+## License
+
+All rights reserved.

@@ -9,6 +9,8 @@ members = [
     "crates/nea-analysis",
     "sde-import",
     "kill-backfill",
+    "market-seed",
+    "tests/integration",
 ]
 
 [workspace.dependencies]
@@ -57,4 +59,5 @@ statrs = "0.18"
 nea-db = { path = "crates/nea-db" }
 nea-esi = { path = "crates/nea-esi" }
 nea-zkill = { path = "crates/nea-zkill" }
+nea-server = { path = "crates/nea-server" }
 nea-analysis = { path = "crates/nea-analysis" }

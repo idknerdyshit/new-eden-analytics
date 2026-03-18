@@ -1,5 +1,7 @@
 // nea-analysis: Statistical and numerical analysis for destruction-price correlation.
 
+pub mod runner;
+
 use chrono::NaiveDate;
 use serde::Serialize;
 use tracing::debug;
