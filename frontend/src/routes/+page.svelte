@@ -123,13 +123,13 @@
 							</div>
 							<div class="flex items-end justify-between">
 								<div>
-									<div class="text-xs text-[var(--color-text-secondary)]">Destroyed</div>
+									<div class="text-xs text-[var(--color-text-secondary)]">Units Destroyed</div>
 									<div class="text-lg font-bold text-[var(--color-accent-red)]">
 										{formatNumber(entry.quantity_destroyed)}
 									</div>
 								</div>
 								<div class="text-right">
-									<div class="text-xs text-[var(--color-text-secondary)]">Kills</div>
+									<div class="text-xs text-[var(--color-text-secondary)]">Killmails</div>
 									<div class="text-lg font-semibold text-[var(--color-text-primary)]">
 										{formatNumber(entry.kill_count)}
 									</div>
