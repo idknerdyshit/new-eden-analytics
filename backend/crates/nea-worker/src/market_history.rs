@@ -53,46 +53,59 @@ pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
             type_ids.len()
         );
 
-        let semaphore = Arc::new(Semaphore::new(20));
-        let mut handles = Vec::with_capacity(type_ids.len());
-
-        for type_id in &type_ids {
-            let permit = match semaphore.clone().acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => {
-                    tracing::error!("market_history: semaphore closed, aborting cycle");
-                    break;
-                }
-            };
-            let esi = Arc::clone(&esi);
-            let pool = pool.clone();
-            let type_id = *type_id;
-
-            handles.push(tokio::spawn(async move {
-                let _permit = permit;
-                let result = fetch_and_store(&pool, &esi, type_id).await;
-                (type_id, result)
-            }));
-        }
-
+        let semaphore = Arc::new(Semaphore::new(5));
         let mut fetched = 0u64;
         let mut inserted = 0u64;
         let mut errors = 0u64;
 
-        for handle in handles {
-            match handle.await {
-                Ok((_type_id, Ok(count))) => {
-                    fetched += 1;
-                    inserted += count;
+        for chunk in type_ids.chunks(50) {
+            let mut handles = Vec::with_capacity(chunk.len());
+
+            for type_id in chunk {
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        tracing::error!("market_history: semaphore closed, aborting cycle");
+                        break;
+                    }
+                };
+                let esi = Arc::clone(&esi);
+                let pool = pool.clone();
+                let type_id = *type_id;
+
+                handles.push(tokio::spawn(async move {
+                    let _permit = permit;
+                    let result = fetch_and_store(&pool, &esi, type_id).await;
+                    (type_id, result)
+                }));
+            }
+
+            for handle in handles {
+                match handle.await {
+                    Ok((_type_id, Ok(count))) => {
+                        fetched += 1;
+                        inserted += count;
+                    }
+                    Ok((type_id, Err(e))) => {
+                        tracing::warn!(type_id, "market_history: fetch error: {e}");
+                        errors += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!("market_history: task join error: {e}");
+                        errors += 1;
+                    }
                 }
-                Ok((type_id, Err(e))) => {
-                    tracing::warn!(type_id, "market_history: fetch error: {e}");
-                    errors += 1;
-                }
-                Err(e) => {
-                    tracing::warn!("market_history: task join error: {e}");
-                    errors += 1;
-                }
+            }
+
+            // Brief pause between batches to stay under ESI rate limits
+            time::sleep(Duration::from_secs(1)).await;
+
+            if esi.error_budget() < 30 {
+                tracing::warn!(
+                    budget = esi.error_budget(),
+                    "market_history: ESI error budget low, pausing 30s"
+                );
+                time::sleep(Duration::from_secs(30)).await;
             }
         }
 

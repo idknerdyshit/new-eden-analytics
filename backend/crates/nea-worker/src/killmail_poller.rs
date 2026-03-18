@@ -133,6 +133,15 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 );
                 time::sleep(Duration::from_secs(6)).await;
             }
+            Err(nea_zkill::ZkillError::Deserialize(ref msg)) => {
+                tracing::warn!(
+                    sequence_id,
+                    error = %msg,
+                    "killmail_poller: skipping unparseable killmail"
+                );
+                sequence_id += 1;
+                time::sleep(Duration::from_millis(100)).await;
+            }
             Err(e) => {
                 tracing::warn!(
                     sequence_id,
