@@ -248,6 +248,8 @@ async fn process_killmail(
         .collect();
 
     if !items.is_empty() {
+        // Delete old items first so flag=0 rows are replaced with proper flags
+        nea_db::delete_killmail_items(pool, km.killmail_id, kill_time).await?;
         nea_db::insert_killmail_items(pool, &items).await?;
     }
 

@@ -224,6 +224,22 @@ pub async fn insert_market_snapshot(
 // Kill queries
 // ═══════════════════════════════════════════════════════════════════
 
+/// Delete all items for a killmail (used by backfill to replace flag=0 rows with proper flags).
+pub async fn delete_killmail_items(
+    pool: &PgPool,
+    killmail_id: i64,
+    kill_time: DateTime<Utc>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "DELETE FROM killmail_items WHERE killmail_id = $1 AND kill_time = $2",
+    )
+    .bind(killmail_id)
+    .bind(kill_time)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn insert_killmail(pool: &PgPool, km: &Killmail) -> Result<(), DbError> {
     sqlx::query(
         r#"
@@ -251,7 +267,9 @@ pub async fn insert_killmail_items(
             r#"
             INSERT INTO killmail_items (killmail_id, kill_time, type_id, quantity_destroyed, quantity_dropped, flag)
             VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (killmail_id, kill_time, type_id, flag) DO UPDATE
+            SET quantity_destroyed = EXCLUDED.quantity_destroyed,
+                quantity_dropped = EXCLUDED.quantity_dropped
             "#,
         )
         .bind(item.killmail_id)
@@ -274,7 +292,10 @@ pub async fn insert_killmail_victim(
         r#"
         INSERT INTO killmail_victims (killmail_id, kill_time, ship_type_id, character_id, corporation_id, alliance_id)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT DO NOTHING
+        ON CONFLICT (killmail_id, kill_time) DO UPDATE
+        SET character_id = COALESCE(EXCLUDED.character_id, killmail_victims.character_id),
+            corporation_id = COALESCE(EXCLUDED.corporation_id, killmail_victims.corporation_id),
+            alliance_id = COALESCE(EXCLUDED.alliance_id, killmail_victims.alliance_id)
         "#,
     )
     .bind(victim.killmail_id)
