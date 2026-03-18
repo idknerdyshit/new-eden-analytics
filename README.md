@@ -40,17 +40,25 @@ cp .env.example .env
 Edit `.env` with your values:
 
 ```env
+# Domain & TLS (set DOMAIN to your real hostname for production)
+DOMAIN=localhost
+ACME_EMAIL=you@example.com
+
+# Database
 DATABASE_URL=postgres://nea:nea_password@localhost:5432/new_eden_analytics
 POSTGRES_USER=nea
 POSTGRES_PASSWORD=nea_password
 POSTGRES_DB=new_eden_analytics
 
+# EVE SSO
 ESI_CLIENT_ID=your_eve_client_id
 ESI_CLIENT_SECRET=your_eve_secret_key
 ESI_CALLBACK_URL=http://localhost:3000/api/auth/callback
 
+# Session
 SESSION_SECRET=generate_a_random_64_char_string_here
 
+# Logging
 RUST_LOG=info
 ```
 
@@ -64,11 +72,16 @@ make up
 docker compose up -d
 ```
 
-This starts:
-- **TimescaleDB** on port 5432
-- **Backend API server** on port 3001
-- **Backend worker** (background data ingestion)
-- **Frontend** on port 3000
+This starts all services behind Traefik on **http://localhost:3000** (plain HTTP, no TLS).
+
+For **production** with TLS:
+
+```bash
+# Set DOMAIN and ACME_EMAIL in .env, then:
+make up-prod
+```
+
+This binds ports 80/443 with automatic Let's Encrypt certificates and HTTP→HTTPS redirect.
 
 ### 3. Import SDE data
 
@@ -142,15 +155,20 @@ npm run build
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│   Frontend   │────▶│  API Server  │────▶│   TimescaleDB   │
-│  (SvelteKit) │     │   (Axum)     │     │  (PostgreSQL)   │
-└─────────────┘     └──────────────┘     └────────▲────────┘
-                                                   │
-                    ┌──────────────┐                │
-                    │    Worker    │────────────────┘
-                    │  (Tokio)    │
-                    └──────┬───────┘
+                    ┌───────────┐
+          :80/:443  │  Traefik  │  TLS (Let's Encrypt)
+                    └─────┬─────┘
+                    ┌─────┴─────┐
+                /   │           │  /api
+       ┌────────────┴┐     ┌───┴──────────┐     ┌─────────────────┐
+       │   Frontend   │     │  API Server  │────▶│   TimescaleDB   │
+       │  (SvelteKit) │     │   (Axum)     │     │  (PostgreSQL)   │
+       └──────────────┘     └──────────────┘     └────────▲────────┘
+                                                          │
+                            ┌──────────────┐              │
+                            │    Worker    │──────────────┘
+                            │  (Tokio)    │
+                            └──────┬───────┘
                            │
               ┌────────────┼────────────┐
               ▼            ▼            ▼
@@ -172,8 +190,10 @@ npm run build
 
 | Command | Description |
 |---------|-------------|
-| `make up` | Start all services |
+| `make up` | Start all services (local dev, HTTP on :3000) |
 | `make down` | Stop all services |
+| `make up-prod` | Start production (TLS on :443 via Let's Encrypt) |
+| `make down-prod` | Stop production |
 | `make build` | Rebuild Docker images |
 | `make logs` | Tail logs from all services |
 | `make migrate` | Run database migrations |

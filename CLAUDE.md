@@ -4,14 +4,15 @@ EVE Online market analytics platform — correlates ship/item destruction with r
 
 ## Architecture
 
-Four services orchestrated by Docker Compose:
+Five services orchestrated by Docker Compose:
 
 | Service | Port | Description |
 |---------|------|-------------|
-| `timescaledb` | 5432 | TimescaleDB (PostgreSQL 16) — all persistent state |
-| `backend-server` | 3001 | Axum HTTP API |
+| `traefik` | 3000 (dev) / 80+443 (prod) | Reverse proxy — plain HTTP locally, TLS via Let's Encrypt in prod |
+| `timescaledb` | 5432 (dev) | TimescaleDB (PostgreSQL 16) — all persistent state |
+| `backend-server` | — | Axum HTTP API (routed via Traefik at `/api`) |
 | `backend-worker` | — | Background data ingestion + analysis |
-| `frontend` | 3000 | SvelteKit SSR app |
+| `frontend` | — | SvelteKit SSR app (routed via Traefik at `/`) |
 
 ## Directory Layout
 
@@ -32,7 +33,8 @@ make seed-sde          # one-time SDE import (~2-5 min)
 
 ## Makefile Commands
 
-- `make up` / `make down` — start/stop all services
+- `make up` / `make down` — start/stop all services (local dev, HTTP on :3000)
+- `make up-prod` / `make down-prod` — start/stop production (TLS on :443 via Let's Encrypt)
 - `make build` — rebuild Docker images
 - `make logs` — tail all service logs
 - `make seed-sde` — import EVE static data (item types, blueprints)
@@ -45,6 +47,8 @@ make seed-sde          # one-time SDE import (~2-5 min)
 
 Defined in `.env` (copy from `.env.example`):
 
+- `DOMAIN` — public hostname for Traefik routing and TLS cert (default: `localhost`)
+- `ACME_EMAIL` — email for Let's Encrypt certificate registration
 - `DATABASE_URL` — Postgres connection string
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — used by TimescaleDB container
 - `ESI_CLIENT_ID`, `ESI_CLIENT_SECRET`, `ESI_CALLBACK_URL` — EVE SSO OAuth2

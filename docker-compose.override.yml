@@ -1,0 +1,14 @@
+# Local development overrides — loaded automatically by Docker Compose.
+# To run production config only: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  traefik:
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "3000:80"
+
+  timescaledb:
+    ports:
+      - "5432:5432"
