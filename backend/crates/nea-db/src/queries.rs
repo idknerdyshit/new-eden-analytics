@@ -345,8 +345,9 @@ pub async fn get_top_destruction(
         r#"
         SELECT dd.type_id, st.name AS type_name, dd.date, dd.quantity_destroyed, dd.kill_count
         FROM daily_destruction dd
-        LEFT JOIN sde_types st ON st.type_id = dd.type_id
+        JOIN sde_types st ON st.type_id = dd.type_id
         WHERE dd.date >= CURRENT_DATE - $1 * INTERVAL '1 day'
+          AND st.category_id IN (6, 7)
         ORDER BY dd.quantity_destroyed DESC
         LIMIT $2
         "#,
