@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import * as d3 from 'd3';
+	import { select } from 'd3-selection';
+	import { scaleLinear, scaleSequential } from 'd3-scale';
+	import { axisBottom } from 'd3-axis';
+	import { format } from 'd3-format';
+	import { max } from 'd3-array';
+	import { interpolateYlOrRd } from 'd3-scale-chromatic';
 
 	interface CorrelationEntry {
 		material_name: string;
@@ -27,7 +32,7 @@
 	function render() {
 		if (!svgEl || width === 0 || !correlations || correlations.length === 0) return;
 
-		const svg = d3.select(svgEl);
+		const svg = select(svgEl);
 		svg.selectAll('*').remove();
 
 		const innerWidth = width - margin.left - margin.right;
@@ -40,13 +45,12 @@
 		// Sort by lag days
 		const sorted = [...correlations].sort((a, b) => a.lag_days - b.lag_days);
 
-		const maxLag = d3.max(sorted, (d) => Math.abs(d.lag_days)) ?? 1;
+		const maxLag = max(sorted, (d) => Math.abs(d.lag_days)) ?? 1;
 
-		const x = d3.scaleLinear().domain([0, maxLag * 1.15]).range([0, innerWidth]);
+		const x = scaleLinear().domain([0, maxLag * 1.15]).range([0, innerWidth]);
 
 		// Color scale based on correlation strength
-		const colorScale = d3
-			.scaleSequential(d3.interpolateYlOrRd)
+		const colorScale = scaleSequential(interpolateYlOrRd)
 			.domain([0, 1]);
 
 		// Rows
@@ -112,7 +116,7 @@
 				.attr('text-anchor', 'start')
 				.attr('fill', '#8b949e')
 				.style('font-size', '11px')
-				.text(`r=${d3.format('.3f')(d.correlation_coeff)}`);
+				.text(`r=${format('.3f')(d.correlation_coeff)}`);
 
 			// Granger significance dot
 			if (d.granger_significant) {
@@ -134,7 +138,7 @@
 		const xAxisG = g
 			.append('g')
 			.attr('transform', `translate(0,${innerHeight})`)
-			.call(d3.axisBottom(x).ticks(6));
+			.call(axisBottom(x).ticks(6));
 		xAxisG.selectAll('text').attr('fill', '#8b949e').style('font-size', '11px');
 		xAxisG.selectAll('.domain, .tick line').attr('stroke', '#8b949e');
 		g.append('text')

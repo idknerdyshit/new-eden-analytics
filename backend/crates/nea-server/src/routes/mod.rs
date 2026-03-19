@@ -39,6 +39,32 @@ async fn request_id_middleware(request: Request, next: Next) -> Response {
     response
 }
 
+async fn security_headers_middleware(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+
+    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    headers.insert(
+        "referrer-policy",
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+
+    if state.secure_cookies {
+        headers.insert(
+            "strict-transport-security",
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
+
+    // TODO: Add Content-Security-Policy once D3 inline styles are addressed
+    response
+}
+
 fn cors_layer(state: &AppState) -> CorsLayer {
     if state.domain == "localhost" {
         CorsLayer::permissive()
@@ -57,6 +83,10 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api", api_router())
         .layer(cors)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security_headers_middleware,
+        ))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))

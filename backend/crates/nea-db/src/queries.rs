@@ -1,12 +1,14 @@
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, QueryBuilder, Postgres};
 use tracing::debug;
 use uuid::Uuid;
 
 use crate::error::DbError;
 use crate::models::*;
+
+const BATCH_SIZE: usize = 500;
 
 // ═══════════════════════════════════════════════════════════════════
 // SDE queries
@@ -173,24 +175,22 @@ pub async fn insert_market_history(
     pool: &PgPool,
     rows: &[MarketHistory],
 ) -> Result<(), DbError> {
-    for row in rows {
-        sqlx::query(
-            r#"
-            INSERT INTO market_history (type_id, region_id, date, average, highest, lowest, volume, order_count)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT DO NOTHING
-            "#,
-        )
-        .bind(row.type_id)
-        .bind(row.region_id)
-        .bind(row.date)
-        .bind(row.average)
-        .bind(row.highest)
-        .bind(row.lowest)
-        .bind(row.volume)
-        .bind(row.order_count)
-        .execute(pool)
-        .await?;
+    for chunk in rows.chunks(BATCH_SIZE) {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO market_history (type_id, region_id, date, average, highest, lowest, volume, order_count) ",
+        );
+        qb.push_values(chunk, |mut b, row| {
+            b.push_bind(row.type_id)
+                .push_bind(row.region_id)
+                .push_bind(row.date)
+                .push_bind(row.average)
+                .push_bind(row.highest)
+                .push_bind(row.lowest)
+                .push_bind(row.volume)
+                .push_bind(row.order_count);
+        });
+        qb.push(" ON CONFLICT DO NOTHING");
+        qb.build().execute(pool).await?;
     }
     Ok(())
 }
@@ -262,24 +262,22 @@ pub async fn insert_killmail_items(
     pool: &PgPool,
     items: &[KillmailItem],
 ) -> Result<(), DbError> {
-    for item in items {
-        sqlx::query(
-            r#"
-            INSERT INTO killmail_items (killmail_id, kill_time, type_id, quantity_destroyed, quantity_dropped, flag)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (killmail_id, kill_time, type_id, flag) DO UPDATE
-            SET quantity_destroyed = EXCLUDED.quantity_destroyed,
-                quantity_dropped = EXCLUDED.quantity_dropped
-            "#,
-        )
-        .bind(item.killmail_id)
-        .bind(item.kill_time)
-        .bind(item.type_id)
-        .bind(item.quantity_destroyed)
-        .bind(item.quantity_dropped)
-        .bind(item.flag)
-        .execute(pool)
-        .await?;
+    for chunk in items.chunks(BATCH_SIZE) {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO killmail_items (killmail_id, kill_time, type_id, quantity_destroyed, quantity_dropped, flag) ",
+        );
+        qb.push_values(chunk, |mut b, item| {
+            b.push_bind(item.killmail_id)
+                .push_bind(item.kill_time)
+                .push_bind(item.type_id)
+                .push_bind(item.quantity_destroyed)
+                .push_bind(item.quantity_dropped)
+                .push_bind(item.flag);
+        });
+        qb.push(
+            " ON CONFLICT (killmail_id, kill_time, type_id, flag) DO UPDATE SET quantity_destroyed = EXCLUDED.quantity_destroyed, quantity_dropped = EXCLUDED.quantity_dropped",
+        );
+        qb.build().execute(pool).await?;
     }
     Ok(())
 }
@@ -313,27 +311,23 @@ pub async fn insert_killmail_attackers(
     pool: &PgPool,
     attackers: &[KillmailAttacker],
 ) -> Result<(), DbError> {
-    for attacker in attackers {
-        sqlx::query(
-            r#"
-            INSERT INTO killmail_attackers
-                (killmail_id, kill_time, character_id, corporation_id, alliance_id,
-                 ship_type_id, weapon_type_id, damage_done, final_blow)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT DO NOTHING
-            "#,
-        )
-        .bind(attacker.killmail_id)
-        .bind(attacker.kill_time)
-        .bind(attacker.character_id)
-        .bind(attacker.corporation_id)
-        .bind(attacker.alliance_id)
-        .bind(attacker.ship_type_id)
-        .bind(attacker.weapon_type_id)
-        .bind(attacker.damage_done)
-        .bind(attacker.final_blow)
-        .execute(pool)
-        .await?;
+    for chunk in attackers.chunks(BATCH_SIZE) {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO killmail_attackers (killmail_id, kill_time, character_id, corporation_id, alliance_id, ship_type_id, weapon_type_id, damage_done, final_blow) ",
+        );
+        qb.push_values(chunk, |mut b, a| {
+            b.push_bind(a.killmail_id)
+                .push_bind(a.kill_time)
+                .push_bind(a.character_id)
+                .push_bind(a.corporation_id)
+                .push_bind(a.alliance_id)
+                .push_bind(a.ship_type_id)
+                .push_bind(a.weapon_type_id)
+                .push_bind(a.damage_done)
+                .push_bind(a.final_blow);
+        });
+        qb.push(" ON CONFLICT DO NOTHING");
+        qb.build().execute(pool).await?;
     }
     Ok(())
 }
@@ -365,22 +359,20 @@ pub async fn upsert_daily_destruction(
     pool: &PgPool,
     rows: &[DailyDestruction],
 ) -> Result<(), DbError> {
-    for row in rows {
-        sqlx::query(
-            r#"
-            INSERT INTO daily_destruction (type_id, date, quantity_destroyed, kill_count)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (type_id, date) DO UPDATE
-            SET quantity_destroyed = EXCLUDED.quantity_destroyed,
-                kill_count = EXCLUDED.kill_count
-            "#,
-        )
-        .bind(row.type_id)
-        .bind(row.date)
-        .bind(row.quantity_destroyed)
-        .bind(row.kill_count)
-        .execute(pool)
-        .await?;
+    for chunk in rows.chunks(BATCH_SIZE) {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO daily_destruction (type_id, date, quantity_destroyed, kill_count) ",
+        );
+        qb.push_values(chunk, |mut b, row| {
+            b.push_bind(row.type_id)
+                .push_bind(row.date)
+                .push_bind(row.quantity_destroyed)
+                .push_bind(row.kill_count);
+        });
+        qb.push(
+            " ON CONFLICT (type_id, date) DO UPDATE SET quantity_destroyed = EXCLUDED.quantity_destroyed, kill_count = EXCLUDED.kill_count",
+        );
+        qb.build().execute(pool).await?;
     }
     Ok(())
 }
@@ -734,6 +726,13 @@ pub async fn delete_session(pool: &PgPool, session_id: Uuid) -> Result<(), DbErr
     Ok(())
 }
 
+pub async fn cleanup_expired_sessions(pool: &PgPool) -> Result<u64, DbError> {
+    let result = sqlx::query("DELETE FROM sessions WHERE expires_at <= NOW()")
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn get_user(pool: &PgPool, character_id: i64) -> Result<Option<User>, DbError> {
     let row = sqlx::query_as::<_, User>(
         r#"
@@ -977,4 +976,124 @@ pub async fn get_active_character_ids_since(
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pool::create_pool;
+
+    async fn test_pool() -> PgPool {
+        dotenvy::dotenv().ok();
+        let url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set for DB tests");
+        create_pool(&url).await.expect("failed to connect to test DB")
+    }
+
+    #[tokio::test]
+    #[ignore] // requires running TimescaleDB
+    async fn test_insert_market_history_batch_and_idempotent() {
+        let pool = test_pool().await;
+
+        let rows = vec![
+            MarketHistory {
+                type_id: 999999,
+                region_id: 10000002,
+                date: NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+                average: 100.0,
+                highest: 110.0,
+                lowest: 90.0,
+                volume: 1000,
+                order_count: 50,
+            },
+            MarketHistory {
+                type_id: 999999,
+                region_id: 10000002,
+                date: NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(),
+                average: 105.0,
+                highest: 115.0,
+                lowest: 95.0,
+                volume: 1100,
+                order_count: 55,
+            },
+        ];
+
+        insert_market_history(&pool, &rows).await.unwrap();
+        // Re-insert is idempotent (ON CONFLICT DO NOTHING)
+        insert_market_history(&pool, &rows).await.unwrap();
+
+        let fetched = get_market_history(&pool, 999999, 10000002, 3650).await.unwrap();
+        assert!(fetched.len() >= 2);
+
+        sqlx::query("DELETE FROM market_history WHERE type_id = 999999")
+            .execute(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // requires running TimescaleDB
+    async fn test_upsert_daily_destruction() {
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2020, 6, 15).unwrap();
+
+        let rows = vec![DailyDestruction {
+            type_id: 999998, date, quantity_destroyed: 100, kill_count: 10, type_name: None,
+        }];
+        upsert_daily_destruction(&pool, &rows).await.unwrap();
+
+        let updated = vec![DailyDestruction {
+            type_id: 999998, date, quantity_destroyed: 200, kill_count: 20, type_name: None,
+        }];
+        upsert_daily_destruction(&pool, &updated).await.unwrap();
+
+        let fetched = get_daily_destruction(&pool, 999998, 3650).await.unwrap();
+        let row = fetched.iter().find(|r| r.date == date).expect("row not found");
+        assert_eq!(row.quantity_destroyed, 200);
+        assert_eq!(row.kill_count, 20);
+
+        sqlx::query("DELETE FROM daily_destruction WHERE type_id = 999998")
+            .execute(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // requires running TimescaleDB
+    async fn test_session_lifecycle() {
+        let pool = test_pool().await;
+
+        upsert_user(&pool, 999999999, "TestUser", &[], &[], Utc::now() + chrono::Duration::hours(1))
+            .await.unwrap();
+
+        let session_id = create_session(&pool, 999999999).await.unwrap();
+        let session = get_session(&pool, session_id).await.unwrap();
+        assert!(session.is_some());
+        assert_eq!(session.unwrap().character_id, 999999999);
+
+        delete_session(&pool, session_id).await.unwrap();
+        let session = get_session(&pool, session_id).await.unwrap();
+        assert!(session.is_none());
+
+        sqlx::query("DELETE FROM users WHERE character_id = 999999999")
+            .execute(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // requires running TimescaleDB
+    async fn test_cleanup_expired_sessions() {
+        let pool = test_pool().await;
+
+        upsert_user(&pool, 999999998, "TestUser2", &[], &[], Utc::now() + chrono::Duration::hours(1))
+            .await.unwrap();
+
+        let session_id = create_session(&pool, 999999998).await.unwrap();
+        sqlx::query("UPDATE sessions SET expires_at = NOW() - INTERVAL '1 hour' WHERE session_id = $1")
+            .bind(session_id).execute(&pool).await.unwrap();
+
+        let deleted = cleanup_expired_sessions(&pool).await.unwrap();
+        assert!(deleted >= 1);
+
+        let session = get_session(&pool, session_id).await.unwrap();
+        assert!(session.is_none());
+
+        sqlx::query("DELETE FROM users WHERE character_id = 999999998")
+            .execute(&pool).await.unwrap();
+    }
 }

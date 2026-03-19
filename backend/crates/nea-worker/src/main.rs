@@ -117,6 +117,24 @@ async fn main() {
     let profile_aggregator_handle =
         tokio::spawn(async move { profile_aggregator::run(pool_pa, esi_pa).await });
 
+    let pool_sc = pool.clone();
+    let session_cleanup_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            match nea_db::cleanup_expired_sessions(&pool_sc).await {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!(deleted = count, "session_cleanup: removed expired sessions");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("session_cleanup: failed: {e}");
+                }
+            }
+        }
+    });
+
     tracing::info!("all worker tasks spawned, waiting for shutdown signal");
 
     // Wait for Ctrl+C or any task to finish (which would indicate an unexpected exit)
@@ -141,6 +159,9 @@ async fn main() {
         }
         result = profile_aggregator_handle => {
             tracing::error!(?result, "profile_aggregator task exited unexpectedly");
+        }
+        result = session_cleanup_handle => {
+            tracing::error!(?result, "session_cleanup task exited unexpectedly");
         }
     }
 

@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import * as d3 from 'd3';
+	import { select, pointer } from 'd3-selection';
+	import { scaleBand, scaleLinear } from 'd3-scale';
+	import { axisBottom, axisLeft } from 'd3-axis';
+	import { line, curveMonotoneX } from 'd3-shape';
+	import { timeParse, timeFormat } from 'd3-time-format';
+	import { format } from 'd3-format';
+	import { range, max } from 'd3-array';
 
 	interface DestructionDataPoint {
 		date: string;
@@ -37,7 +43,7 @@
 	function render() {
 		if (!svgEl || width === 0 || !data || data.length === 0) return;
 
-		const svg = d3.select(svgEl);
+		const svg = select(svgEl);
 		svg.selectAll('*').remove();
 
 		const innerWidth = width - margin.left - margin.right;
@@ -49,29 +55,28 @@
 			.append('g')
 			.attr('transform', `translate(${margin.left},${margin.top})`);
 
-		const parseDate = d3.timeParse('%Y-%m-%d');
+		const parseDate = timeParse('%Y-%m-%d');
 		const parsed = data.map((d) => ({
 			...d,
 			parsedDate: parseDate(d.date) ?? new Date(d.date)
 		}));
 
-		const x = d3
-			.scaleBand<number>()
-			.domain(d3.range(parsed.length))
+		const x = scaleBand<number>()
+			.domain(range(parsed.length))
 			.range([0, innerWidth])
 			.padding(0.15);
 
-		const yMax = d3.max(parsed, (d) => d.quantity_destroyed) ?? 0;
-		const y = d3.scaleLinear().domain([0, yMax * 1.1]).nice().range([innerHeight, 0]);
+		const yMax = max(parsed, (d) => d.quantity_destroyed) ?? 0;
+		const y = scaleLinear().domain([0, yMax * 1.1]).nice().range([innerHeight, 0]);
 
 		// X axis
 		const tickInterval = Math.max(1, Math.floor(parsed.length / 8));
 		const tickValues = parsed
 			.map((_, i) => i)
 			.filter((i) => i % tickInterval === 0);
-		const xAxis = d3.axisBottom(x).tickValues(tickValues).tickFormat((i) => {
+		const xAxis = axisBottom(x).tickValues(tickValues).tickFormat((i) => {
 			const d = parsed[i as number];
-			return d ? d3.timeFormat('%b %d')(d.parsedDate) : '';
+			return d ? timeFormat('%b %d')(d.parsedDate) : '';
 		});
 		g.append('g')
 			.attr('transform', `translate(0,${innerHeight})`)
@@ -83,7 +88,7 @@
 
 		// Y axis
 		g.append('g')
-			.call(d3.axisLeft(y).ticks(6).tickFormat(d3.format('.2s')))
+			.call(axisLeft(y).ticks(6).tickFormat(format('.2s')))
 			.selectAll('text')
 			.attr('fill', '#8b949e')
 			.style('font-size', '11px');
@@ -109,23 +114,21 @@
 			.filter((d) => d.ma !== null) as Array<(typeof parsed)[0] & { ma: number; index: number }>;
 
 		if (maData.length > 1) {
-			const line = d3
-				.line<(typeof maData)[0]>()
+			const maLine = line<(typeof maData)[0]>()
 				.x((d) => (x(d.index) ?? 0) + x.bandwidth() / 2)
 				.y((d) => y(d.ma))
-				.curve(d3.curveMonotoneX);
+				.curve(curveMonotoneX);
 
 			g.append('path')
 				.datum(maData)
 				.attr('fill', 'none')
 				.attr('stroke', '#ffffff')
 				.attr('stroke-width', 2)
-				.attr('d', line);
+				.attr('d', maLine);
 		}
 
 		// Tooltip
-		const tooltip = d3
-			.select(container)
+		const tooltip = select(container)
 			.selectAll<HTMLDivElement, unknown>('.chart-tooltip')
 			.data([null])
 			.join('div')
@@ -138,26 +141,25 @@
 			.style('padding', '8px 12px')
 			.style('color', '#e6edf3')
 			.style('font-size', '12px')
+			.style('white-space', 'pre-line')
 			.style('opacity', 0)
 			.style('z-index', 10);
 
 		g.selectAll('.bar')
 			.on('mouseenter', function (event, d: any) {
-				d3.select(this).attr('fill', '#f5a623');
+				select(this).attr('fill', '#f5a623');
 				tooltip
 					.style('opacity', 1)
-					.html(
-						`<strong>${d.date}</strong><br/>` +
-							`Destroyed: ${d3.format(',')(d.quantity_destroyed)}<br/>` +
-							`Kills: ${d3.format(',')(d.kill_count)}`
+					.text(
+						`${d.date}\nDestroyed: ${format(',')(d.quantity_destroyed)}\nKills: ${format(',')(d.kill_count)}`
 					);
 			})
 			.on('mousemove', function (event) {
-				const [mx, my] = d3.pointer(event, container);
+				const [mx, my] = pointer(event, container);
 				tooltip.style('left', mx + 16 + 'px').style('top', my - 10 + 'px');
 			})
 			.on('mouseleave', function () {
-				d3.select(this).attr('fill', '#f0883e');
+				select(this).attr('fill', '#f0883e');
 				tooltip.style('opacity', 0);
 			});
 	}
@@ -171,7 +173,7 @@
 		resizeObserver.observe(container);
 		return () => {
 			resizeObserver?.disconnect();
-			d3.select(container).selectAll('.chart-tooltip').remove();
+			select(container).selectAll('.chart-tooltip').remove();
 		};
 	});
 

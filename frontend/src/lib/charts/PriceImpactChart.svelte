@@ -1,6 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import * as d3 from 'd3';
+	import { select, pointer } from 'd3-selection';
+	import { scaleLinear, scaleTime } from 'd3-scale';
+	import { axisBottom, axisLeft, axisRight } from 'd3-axis';
+	import { line, area, curveMonotoneX } from 'd3-shape';
+	import { timeParse, timeFormat } from 'd3-time-format';
+	import { format } from 'd3-format';
+	import { extent, max, bisector } from 'd3-array';
+	import { brushX } from 'd3-brush';
 
 	interface PriceDataPoint {
 		date: string;
@@ -35,13 +42,13 @@
 		const hasDestruction = destructionData && destructionData.length > 0;
 		if (!hasPrice && !hasDestruction) return;
 
-		const svg = d3.select(svgEl);
+		const svg = select(svgEl);
 		svg.selectAll('*').remove();
 
 		const innerWidth = width - margin.left - margin.right;
 		const innerHeight = height - margin.top - margin.bottom;
 
-		const parseDate = d3.timeParse('%Y-%m-%d');
+		const parseDate = timeParse('%Y-%m-%d');
 		const priceParsed = (priceData ?? []).map((d) => ({
 			...d,
 			parsedDate: parseDate(d.date) ?? new Date(d.date)
@@ -56,7 +63,7 @@
 			...priceParsed.map((d) => d.parsedDate),
 			...destructionParsed.map((d) => d.parsedDate)
 		];
-		const xFullDomain = d3.extent(allDates) as [Date, Date];
+		const xFullDomain = extent(allDates) as [Date, Date];
 
 		// Clip path
 		const clipId = 'clip-' + Math.random().toString(36).slice(2, 9);
@@ -73,15 +80,13 @@
 		const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
 		// Scales
-		const x = d3.scaleTime().domain(xFullDomain).range([0, innerWidth]);
-		const yPrice = d3
-			.scaleLinear()
-			.domain([0, (d3.max(priceParsed, (d) => d.average) ?? 0) * 1.1])
+		const x = scaleTime().domain(xFullDomain).range([0, innerWidth]);
+		const yPrice = scaleLinear()
+			.domain([0, (max(priceParsed, (d) => d.average) ?? 0) * 1.1])
 			.nice()
 			.range([innerHeight, 0]);
-		const yDestruction = d3
-			.scaleLinear()
-			.domain([0, (d3.max(destructionParsed, (d) => d.quantity_destroyed) ?? 0) * 1.1])
+		const yDestruction = scaleLinear()
+			.domain([0, (max(destructionParsed, (d) => d.quantity_destroyed) ?? 0) * 1.1])
 			.nice()
 			.range([innerHeight, 0]);
 
@@ -90,27 +95,25 @@
 
 		// Destruction area
 		if (destructionParsed.length > 0) {
-			const area = d3
-				.area<(typeof destructionParsed)[0]>()
+			const destArea = area<(typeof destructionParsed)[0]>()
 				.x((d) => x(d.parsedDate))
 				.y0(innerHeight)
 				.y1((d) => yDestruction(d.quantity_destroyed))
-				.curve(d3.curveMonotoneX);
+				.curve(curveMonotoneX);
 
 			chartArea
 				.append('path')
 				.datum(destructionParsed)
 				.attr('fill', 'rgba(240,136,62,0.3)')
-				.attr('d', area);
+				.attr('d', destArea);
 		}
 
 		// Price line
 		if (priceParsed.length > 0) {
-			const line = d3
-				.line<(typeof priceParsed)[0]>()
+			const priceLine = line<(typeof priceParsed)[0]>()
 				.x((d) => x(d.parsedDate))
 				.y((d) => yPrice(d.average))
-				.curve(d3.curveMonotoneX);
+				.curve(curveMonotoneX);
 
 			chartArea
 				.append('path')
@@ -118,7 +121,7 @@
 				.attr('fill', 'none')
 				.attr('stroke', '#58a6ff')
 				.attr('stroke-width', 2)
-				.attr('d', line);
+				.attr('d', priceLine);
 		}
 
 		// X axis
@@ -126,12 +129,12 @@
 			.append('g')
 			.attr('class', 'x-axis')
 			.attr('transform', `translate(0,${innerHeight})`)
-			.call(d3.axisBottom(x).ticks(6).tickFormat(d3.timeFormat('%b %d') as any));
+			.call(axisBottom(x).ticks(6).tickFormat(timeFormat('%b %d') as any));
 		xAxisG.selectAll('text').attr('fill', '#8b949e').style('font-size', '11px');
 		xAxisG.selectAll('.domain, .tick line').attr('stroke', '#8b949e');
 
 		// Left Y axis (price)
-		const yLeftG = g.append('g').call(d3.axisLeft(yPrice).ticks(6).tickFormat(d3.format('.2s')));
+		const yLeftG = g.append('g').call(axisLeft(yPrice).ticks(6).tickFormat(format('.2s')));
 		yLeftG.selectAll('text').attr('fill', '#58a6ff').style('font-size', '11px');
 		yLeftG.selectAll('.domain, .tick line').attr('stroke', '#8b949e');
 		g.append('text')
@@ -147,7 +150,7 @@
 		const yRightG = g
 			.append('g')
 			.attr('transform', `translate(${innerWidth},0)`)
-			.call(d3.axisRight(yDestruction).ticks(6).tickFormat(d3.format('.2s')));
+			.call(axisRight(yDestruction).ticks(6).tickFormat(format('.2s')));
 		yRightG.selectAll('text').attr('fill', '#f0883e').style('font-size', '11px');
 		yRightG.selectAll('.domain, .tick line').attr('stroke', '#8b949e');
 		g.append('text')
@@ -160,8 +163,7 @@
 			.text('Destruction');
 
 		// Tooltip
-		const tooltip = d3
-			.select(container)
+		const tooltip = select(container)
 			.selectAll<HTMLDivElement, unknown>('.chart-tooltip')
 			.data([null])
 			.join('div')
@@ -174,11 +176,12 @@
 			.style('padding', '8px 12px')
 			.style('color', '#e6edf3')
 			.style('font-size', '12px')
+			.style('white-space', 'pre-line')
 			.style('opacity', 0)
 			.style('z-index', 10);
 
 		// Hover overlay
-		const bisectDate = d3.bisector<(typeof priceParsed)[0], Date>((d) => d.parsedDate).left;
+		const bisectDate = bisector<(typeof priceParsed)[0], Date>((d) => d.parsedDate).left;
 		const overlay = chartArea
 			.append('rect')
 			.attr('width', innerWidth)
@@ -201,8 +204,8 @@
 				hoverLine.style('opacity', 1);
 			})
 			.on('mousemove', function (event) {
-				const [mx, my] = d3.pointer(event, container);
-				const xPos = d3.pointer(event, this)[0];
+				const [mx, my] = pointer(event, container);
+				const xPos = pointer(event, this)[0];
 				const dateAtMouse = x.invert(xPos);
 
 				let priceVal = '';
@@ -212,12 +215,12 @@
 						priceParsed.length - 1
 					);
 					const p = priceParsed[idx];
-					if (p) priceVal = `Price: ${d3.format(',.0f')(p.average)} ISK<br/>`;
+					if (p) priceVal = `\nPrice: ${format(',.0f')(p.average)} ISK`;
 				}
 
 				let destVal = '';
 				if (destructionParsed.length > 0) {
-					const bisect2 = d3.bisector<(typeof destructionParsed)[0], Date>(
+					const bisect2 = bisector<(typeof destructionParsed)[0], Date>(
 						(d) => d.parsedDate
 					).left;
 					const idx = Math.min(
@@ -226,15 +229,13 @@
 					);
 					const dd = destructionParsed[idx];
 					if (dd)
-						destVal = `Destroyed: ${d3.format(',')(dd.quantity_destroyed)}<br/>`;
+						destVal = `\nDestroyed: ${format(',')(dd.quantity_destroyed)}`;
 				}
 
 				hoverLine.attr('x1', xPos).attr('x2', xPos);
 				tooltip
-					.html(
-						`<strong>${d3.timeFormat('%Y-%m-%d')(dateAtMouse)}</strong><br/>` +
-							priceVal +
-							destVal
+					.text(
+						`${timeFormat('%Y-%m-%d')(dateAtMouse)}${priceVal}${destVal}`
 					)
 					.style('left', mx + 16 + 'px')
 					.style('top', my - 10 + 'px');
@@ -245,8 +246,7 @@
 			});
 
 		// Brush for zoom
-		const brush = d3
-			.brushX()
+		const brush = brushX()
 			.extent([
 				[0, 0],
 				[innerWidth, innerHeight]
@@ -272,29 +272,27 @@
 			chartArea.selectAll('line.hover-line').remove();
 
 			if (destructionParsed.length > 0) {
-				const area = d3
-					.area<(typeof destructionParsed)[0]>()
+				const destArea = area<(typeof destructionParsed)[0]>()
 					.x((d) => x(d.parsedDate))
 					.y0(innerHeight)
 					.y1((d) => yDestruction(d.quantity_destroyed))
-					.curve(d3.curveMonotoneX);
-				chartArea.insert('path', '.brush').datum(destructionParsed).attr('fill', 'rgba(240,136,62,0.3)').attr('d', area);
+					.curve(curveMonotoneX);
+				chartArea.insert('path', '.brush').datum(destructionParsed).attr('fill', 'rgba(240,136,62,0.3)').attr('d', destArea);
 			}
 			if (priceParsed.length > 0) {
-				const line = d3
-					.line<(typeof priceParsed)[0]>()
+				const priceLine = line<(typeof priceParsed)[0]>()
 					.x((d) => x(d.parsedDate))
 					.y((d) => yPrice(d.average))
-					.curve(d3.curveMonotoneX);
+					.curve(curveMonotoneX);
 				chartArea
 					.insert('path', '.brush')
 					.datum(priceParsed)
 					.attr('fill', 'none')
 					.attr('stroke', '#58a6ff')
 					.attr('stroke-width', 2)
-					.attr('d', line);
+					.attr('d', priceLine);
 			}
-			xAxisG.call(d3.axisBottom(x).ticks(6).tickFormat(d3.timeFormat('%b %d') as any));
+			xAxisG.call(axisBottom(x).ticks(6).tickFormat(timeFormat('%b %d') as any));
 			xAxisG.selectAll('text').attr('fill', '#8b949e').style('font-size', '11px');
 			xAxisG.selectAll('.domain, .tick line').attr('stroke', '#8b949e');
 		}
@@ -309,7 +307,7 @@
 		resizeObserver.observe(container);
 		return () => {
 			resizeObserver?.disconnect();
-			d3.select(container).selectAll('.chart-tooltip').remove();
+			select(container).selectAll('.chart-tooltip').remove();
 		};
 	});
 

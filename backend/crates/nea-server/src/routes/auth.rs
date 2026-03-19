@@ -190,7 +190,7 @@ async fn verify_eve_jwt(token: &str, state: &AppState) -> Result<(i64, String), 
 
     let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
     validation.set_issuer(&["login.eveonline.com"]);
-    validation.validate_aud = false;
+    validation.set_audience(&[&state.esi_client_id]);
 
     let token_data = jsonwebtoken::decode::<EveClaims>(token, &decoding_key, &validation)
         .map_err(|e| ApiError::Internal(format!("JWT verification failed: {e}")))?;
@@ -299,6 +299,7 @@ mod tests {
             "sub": "CHARACTER:EVE:12345678",
             "name": "Test Pilot",
             "iss": "login.eveonline.com",
+            "aud": "EVE-app-client-id",
             "exp": chrono::Utc::now().timestamp() + 3600,
         });
 
@@ -330,7 +331,7 @@ mod tests {
 
         let state = AppState {
             pool: sqlx::PgPool::connect_lazy("postgres://fake").unwrap(),
-            esi_client_id: String::new(),
+            esi_client_id: "EVE-app-client-id".to_string(),
             esi_client_secret: String::new(),
             esi_callback_url: String::new(),
             session_secret: String::new(),

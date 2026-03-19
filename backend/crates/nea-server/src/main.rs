@@ -29,14 +29,20 @@ async fn main() {
     let domain = std::env::var("DOMAIN").unwrap_or_else(|_| "localhost".to_string());
     let secure_cookies = domain != "localhost";
 
-    if secure_cookies
-        && (session_secret == "change-me-in-production"
+    if secure_cookies {
+        if session_secret == "change-me-in-production"
             || session_secret == "change-me-to-a-random-string"
-            || session_secret.len() < 32)
-    {
-        panic!(
-            "SESSION_SECRET must be at least 32 characters and not a default value in production (DOMAIN={domain})"
-        );
+            || session_secret.len() < 32
+        {
+            panic!(
+                "SESSION_SECRET must be at least 32 characters and not a default value in production (DOMAIN={domain})"
+            );
+        }
+        if esi_client_id.is_empty() || esi_client_secret.is_empty() {
+            panic!(
+                "ESI_CLIENT_ID and ESI_CLIENT_SECRET must be set in production (DOMAIN={domain})"
+            );
+        }
     }
 
     tracing::info!("connecting to database");

@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import * as d3 from 'd3';
+	import { select, pointer } from 'd3-selection';
+	import { scaleBand, scaleLinear } from 'd3-scale';
+	import { axisBottom, axisLeft } from 'd3-axis';
+	import { format } from 'd3-format';
 
 	interface CCFDataPoint {
 		lag: number;
@@ -27,7 +30,7 @@
 	function render() {
 		if (!svgEl || width === 0 || !data || data.length === 0) return;
 
-		const svg = d3.select(svgEl);
+		const svg = select(svgEl);
 		svg.selectAll('*').remove();
 
 		const innerWidth = width - margin.left - margin.right;
@@ -37,13 +40,12 @@
 		const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
 		// Scales
-		const x = d3
-			.scaleBand<number>()
+		const x = scaleBand<number>()
 			.domain(data.map((d) => d.lag))
 			.range([0, innerWidth])
 			.padding(0.2);
 
-		const y = d3.scaleLinear().domain([-1, 1]).range([innerHeight, 0]);
+		const y = scaleLinear().domain([-1, 1]).range([innerHeight, 0]);
 
 		// Zero line
 		g.append('line')
@@ -91,7 +93,7 @@
 		const xTickValues = data.map((d) => d.lag).filter((_, i) => i % tickEvery === 0);
 		g.append('g')
 			.attr('transform', `translate(0,${innerHeight})`)
-			.call(d3.axisBottom(x).tickValues(xTickValues).tickFormat((d) => `${d}`))
+			.call(axisBottom(x).tickValues(xTickValues).tickFormat((d) => `${d}`))
 			.selectAll('text')
 			.attr('fill', '#8b949e')
 			.style('font-size', '11px');
@@ -105,7 +107,7 @@
 
 		// Y axis
 		g.append('g')
-			.call(d3.axisLeft(y).ticks(8).tickFormat(d3.format('.2f')))
+			.call(axisLeft(y).ticks(8).tickFormat(format('.2f')))
 			.selectAll('text')
 			.attr('fill', '#8b949e')
 			.style('font-size', '11px');
@@ -113,8 +115,7 @@
 		g.selectAll('.domain, .tick line').attr('stroke', '#8b949e');
 
 		// Tooltip
-		const tooltip = d3
-			.select(container)
+		const tooltip = select(container)
 			.selectAll<HTMLDivElement, unknown>('.chart-tooltip')
 			.data([null])
 			.join('div')
@@ -127,26 +128,25 @@
 			.style('padding', '8px 12px')
 			.style('color', '#e6edf3')
 			.style('font-size', '12px')
+			.style('white-space', 'pre-line')
 			.style('opacity', 0)
 			.style('z-index', 10);
 
 		g.selectAll('.ccf-bar')
 			.on('mouseenter', function (event, d: any) {
-				d3.select(this).style('opacity', 0.8);
+				select(this).style('opacity', 0.8);
 				tooltip
 					.style('opacity', 1)
-					.html(
-						`<strong>Lag: ${d.lag} days</strong><br/>` +
-							`Correlation: ${d3.format('.4f')(d.correlation)}` +
-							(d.lag === optimalLag ? '<br/><em>Optimal lag</em>' : '')
+					.text(
+						`Lag: ${d.lag} days\nCorrelation: ${format('.4f')(d.correlation)}${d.lag === optimalLag ? '\nOptimal lag' : ''}`
 					);
 			})
 			.on('mousemove', function (event) {
-				const [mx, my] = d3.pointer(event, container);
+				const [mx, my] = pointer(event, container);
 				tooltip.style('left', mx + 16 + 'px').style('top', my - 10 + 'px');
 			})
 			.on('mouseleave', function () {
-				d3.select(this).style('opacity', 1);
+				select(this).style('opacity', 1);
 				tooltip.style('opacity', 0);
 			});
 	}
@@ -160,7 +160,7 @@
 		resizeObserver.observe(container);
 		return () => {
 			resizeObserver?.disconnect();
-			d3.select(container).selectAll('.chart-tooltip').remove();
+			select(container).selectAll('.chart-tooltip').remove();
 		};
 	});
 
