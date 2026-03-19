@@ -85,7 +85,9 @@ async fn main() {
     tracing::info!("database migrations complete");
 
     // Clients
-    let esi = Arc::new(EsiClient::new());
+    let esi = Arc::new(EsiClient::with_user_agent(
+        "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)",
+    ));
     let r2z2 = Arc::new(R2z2Client::new());
 
     tracing::info!("spawning worker tasks");

@@ -4,7 +4,6 @@ members = [
     "crates/nea-server",
     "crates/nea-worker",
     "crates/nea-db",
-    "crates/nea-esi",
     "crates/nea-zkill",
     "crates/nea-analysis",
     "sde-import",
@@ -58,7 +57,7 @@ statrs = "0.18"
 
 # Internal crates
 nea-db = { path = "crates/nea-db" }
-nea-esi = { path = "crates/nea-esi" }
+nea-esi = { git = "https://github.com/idknerdyshit/nea-esi.git" }
 nea-zkill = { path = "crates/nea-zkill" }
 nea-server = { path = "crates/nea-server" }
 nea-analysis = { path = "crates/nea-analysis" }

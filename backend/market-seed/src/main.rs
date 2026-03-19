@@ -80,7 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set");
     let pool = nea_db::create_pool(&database_url).await?;
-    let esi = Arc::new(EsiClient::new());
+    let esi = Arc::new(EsiClient::with_user_agent(
+        "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)",
+    ));
 
     let type_ids = get_tracked_type_ids(&pool).await?;
     if type_ids.is_empty() {
