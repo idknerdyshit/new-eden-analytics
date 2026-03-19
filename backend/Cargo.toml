@@ -17,7 +17,7 @@ members = [
 tokio = { version = "1", features = ["full"] }
 
 # Web framework
-axum = "0.7"
+axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
 
 # HTTP client
@@ -45,14 +45,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Auth
-oauth2 = "4"
-jsonwebtoken = "9"
+oauth2 = "5"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 
 # Config
 dotenvy = "0.15"
 
 # Numerical / statistical analysis
-nalgebra = "0.33"
+nalgebra = "0.34"
 statrs = "0.18"
 
 # Internal crates

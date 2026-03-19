@@ -38,21 +38,32 @@ pub fn routes() -> Router<AppState> {
         .route("/auth/me", get(me))
 }
 
-fn build_oauth_client(state: &AppState) -> Result<BasicClient, ApiError> {
-    let client = BasicClient::new(
-        ClientId::new(state.esi_client_id.clone()),
-        Some(ClientSecret::new(state.esi_client_secret.clone())),
-        AuthUrl::new(EVE_AUTH_URL.to_string())
-            .map_err(|e| ApiError::Internal(format!("invalid auth url: {e}")))?,
-        Some(
+fn build_oauth_client(
+    state: &AppState,
+) -> Result<
+    BasicClient<
+        oauth2::EndpointSet,
+        oauth2::EndpointNotSet,
+        oauth2::EndpointNotSet,
+        oauth2::EndpointNotSet,
+        oauth2::EndpointSet,
+    >,
+    ApiError,
+> {
+    let client = BasicClient::new(ClientId::new(state.esi_client_id.clone()))
+        .set_client_secret(ClientSecret::new(state.esi_client_secret.clone()))
+        .set_auth_uri(
+            AuthUrl::new(EVE_AUTH_URL.to_string())
+                .map_err(|e| ApiError::Internal(format!("invalid auth url: {e}")))?,
+        )
+        .set_token_uri(
             TokenUrl::new(EVE_TOKEN_URL.to_string())
                 .map_err(|e| ApiError::Internal(format!("invalid token url: {e}")))?,
-        ),
-    )
-    .set_redirect_uri(
-        RedirectUrl::new(state.esi_callback_url.clone())
-            .map_err(|e| ApiError::Internal(format!("invalid redirect url: {e}")))?,
-    );
+        )
+        .set_redirect_uri(
+            RedirectUrl::new(state.esi_callback_url.clone())
+                .map_err(|e| ApiError::Internal(format!("invalid redirect url: {e}")))?,
+        );
 
     Ok(client)
 }
@@ -97,9 +108,14 @@ async fn callback(
 
     let client = build_oauth_client(&app_state)?;
 
+    let http_client = oauth2::reqwest::ClientBuilder::new()
+        .redirect(oauth2::reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| ApiError::Internal(format!("failed to build http client: {e}")))?;
+
     let token_result = client
         .exchange_code(AuthorizationCode::new(params.code))
-        .request_async(oauth2::reqwest::async_http_client)
+        .request_async(&http_client)
         .await
         .map_err(|e| ApiError::Internal(format!("token exchange failed: {e}")))?;
 
@@ -109,7 +125,7 @@ async fn callback(
 
     let expires_at = token_result
         .expires_in()
-        .map(|d| chrono::Utc::now() + chrono::Duration::seconds(d.as_secs() as i64))
+        .map(|d: std::time::Duration| chrono::Utc::now() + chrono::Duration::seconds(d.as_secs() as i64))
         .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
 
     // Tokens are unused — store empty bytes. Add encryption if retrieval is ever needed.
