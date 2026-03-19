@@ -123,8 +123,24 @@
 			/>
 			<div>
 				<h1 class="text-2xl font-bold">{detail.character.name}</h1>
-				<div class="mt-1 text-sm text-[var(--color-text-secondary)]">
-					Character ID: {characterId}
+				<div class="mt-1 flex items-center gap-3 text-sm text-[var(--color-text-secondary)]">
+					<span>ID: {characterId}</span>
+					{#if detail.character.corporation_id}
+						<a
+							href="/corporations/{detail.character.corporation_id}"
+							class="text-[var(--color-accent-blue)] hover:underline"
+						>
+							Corporation
+						</a>
+					{/if}
+					{#if detail.character.alliance_id}
+						<a
+							href="/alliances/{detail.character.alliance_id}"
+							class="text-[var(--color-accent-blue)] hover:underline"
+						>
+							Alliance
+						</a>
+					{/if}
 				</div>
 				{#if profile}
 					<div class="mt-2">

@@ -193,6 +193,42 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
 }
 
+// ── Corporations / Alliances / Doctrines ──
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Corporation {
+    pub corporation_id: i64,
+    pub name: String,
+    pub alliance_id: Option<i64>,
+    pub member_count: Option<i32>,
+    pub fetched_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Alliance {
+    pub alliance_id: i64,
+    pub name: String,
+    pub ticker: Option<String>,
+    pub fetched_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct DoctrineProfile {
+    pub id: i32,
+    pub entity_type: String,
+    pub entity_id: i64,
+    pub entity_name: String,
+    pub window_days: i32,
+    pub member_count: i32,
+    pub total_kills: i32,
+    pub total_losses: i32,
+    pub ship_usage: Option<serde_json::Value>,
+    pub doctrines: Option<serde_json::Value>,
+    pub ship_trends: Option<serde_json::Value>,
+    pub fleet_comps: Option<serde_json::Value>,
+    pub computed_at: DateTime<Utc>,
+}
+
 // ── Worker ──
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

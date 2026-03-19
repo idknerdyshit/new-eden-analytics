@@ -1,5 +1,7 @@
 mod aggregation;
 mod analyzer;
+mod doctrine_aggregator;
+mod fitting_utils;
 mod killmail_poller;
 mod market_history;
 mod market_orders;
@@ -117,6 +119,11 @@ async fn main() {
     let profile_aggregator_handle =
         tokio::spawn(async move { profile_aggregator::run(pool_pa, esi_pa).await });
 
+    let pool_da = pool.clone();
+    let esi_da = Arc::clone(&esi);
+    let doctrine_aggregator_handle =
+        tokio::spawn(async move { doctrine_aggregator::run(pool_da, esi_da).await });
+
     let pool_sc = pool.clone();
     let session_cleanup_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
@@ -159,6 +166,9 @@ async fn main() {
         }
         result = profile_aggregator_handle => {
             tracing::error!(?result, "profile_aggregator task exited unexpectedly");
+        }
+        result = doctrine_aggregator_handle => {
+            tracing::error!(?result, "doctrine_aggregator task exited unexpectedly");
         }
         result = session_cleanup_handle => {
             tracing::error!(?result, "session_cleanup task exited unexpectedly");

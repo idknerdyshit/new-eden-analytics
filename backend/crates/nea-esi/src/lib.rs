@@ -99,6 +99,22 @@ pub struct EsiCharacterInfo {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct EsiCorporationInfo {
+    pub name: String,
+    #[serde(default)]
+    pub alliance_id: Option<i64>,
+    #[serde(default)]
+    pub member_count: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EsiAllianceInfo {
+    pub name: String,
+    #[serde(default)]
+    pub ticker: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct EsiKillmailVictim {
     #[serde(default)]
     pub ship_type_id: i32,
@@ -380,6 +396,40 @@ impl EsiClient {
             .await
             .map_err(|e| EsiError::Deserialize(e.to_string()))?;
         debug!(character_id, name = %info.name, "get_character complete");
+        Ok(info)
+    }
+
+    // -----------------------------------------------------------------------
+    // Corporation endpoint
+    // -----------------------------------------------------------------------
+
+    /// Fetch corporation info from ESI.
+    #[tracing::instrument(skip(self))]
+    pub async fn get_corporation(&self, corporation_id: i64) -> Result<EsiCorporationInfo> {
+        let url = format!("{}/corporations/{}/", BASE_URL, corporation_id);
+        let resp = self.request(&url).await?;
+        let info: EsiCorporationInfo = resp
+            .json()
+            .await
+            .map_err(|e| EsiError::Deserialize(e.to_string()))?;
+        debug!(corporation_id, name = %info.name, "get_corporation complete");
+        Ok(info)
+    }
+
+    // -----------------------------------------------------------------------
+    // Alliance endpoint
+    // -----------------------------------------------------------------------
+
+    /// Fetch alliance info from ESI.
+    #[tracing::instrument(skip(self))]
+    pub async fn get_alliance(&self, alliance_id: i64) -> Result<EsiAllianceInfo> {
+        let url = format!("{}/alliances/{}/", BASE_URL, alliance_id);
+        let resp = self.request(&url).await?;
+        let info: EsiAllianceInfo = resp
+            .json()
+            .await
+            .map_err(|e| EsiError::Deserialize(e.to_string()))?;
+        debug!(alliance_id, name = %info.name, "get_alliance complete");
         Ok(info)
     }
 

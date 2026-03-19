@@ -170,6 +170,92 @@ export interface KillmailEntry {
 	r2z2_sequence_id: number | null;
 }
 
+// ── Corporation / Alliance / Doctrine Types ──
+
+export interface CorporationInfo {
+	corporation_id: number;
+	name: string;
+	alliance_id: number | null;
+	member_count: number | null;
+	fetched_at: string;
+}
+
+export interface AllianceInfo {
+	alliance_id: number;
+	name: string;
+	ticker: string | null;
+	fetched_at: string;
+}
+
+export interface DoctrineEntry {
+	ship_type_id: number;
+	ship_name: string;
+	canonical_fit: FittingModule[];
+	occurrences: number;
+	pilot_count: number;
+	variant_count: number;
+}
+
+export interface ShipUsageEntry {
+	type_id: number;
+	name: string;
+	count: number;
+	pct: number;
+}
+
+export interface ShipTrend {
+	type_id: number;
+	name: string;
+	current_count: number;
+	previous_count: number;
+	change_pct: number;
+}
+
+export interface FleetComp {
+	ships: { type_id: number; name: string }[];
+	occurrence_count: number;
+}
+
+export interface DoctrineProfileData {
+	id: number;
+	entity_type: string;
+	entity_id: number;
+	entity_name: string;
+	window_days: number;
+	member_count: number;
+	total_kills: number;
+	total_losses: number;
+	ship_usage: ShipUsageEntry[] | null;
+	doctrines: DoctrineEntry[] | null;
+	ship_trends: ShipTrend[] | null;
+	fleet_comps: FleetComp[] | null;
+	computed_at: string;
+}
+
+export interface CorporationDetail {
+	corporation: CorporationInfo;
+	profiles: DoctrineProfileData[];
+}
+
+export interface AllianceDetail {
+	alliance: AllianceInfo;
+	profiles: DoctrineProfileData[];
+}
+
+export interface CorporationSearchResult {
+	corporations: CorporationInfo[];
+	page: number;
+	per_page: number;
+	total: number;
+}
+
+export interface AllianceSearchResult {
+	alliances: AllianceInfo[];
+	page: number;
+	per_page: number;
+	total: number;
+}
+
 // ── Fetch Wrapper ──
 
 class ApiError extends Error {
@@ -236,5 +322,17 @@ export const api = {
 	getCharacterKills: (characterId: number, limit = 20) =>
 		fetchJson<KillmailEntry[]>(`/characters/${characterId}/kills?limit=${limit}`),
 	getCharacterLosses: (characterId: number, limit = 20) =>
-		fetchJson<KillmailEntry[]>(`/characters/${characterId}/losses?limit=${limit}`)
+		fetchJson<KillmailEntry[]>(`/characters/${characterId}/losses?limit=${limit}`),
+	searchCorporations: (q: string, page = 1) =>
+		fetchJson<CorporationSearchResult>(
+			`/corporations/search?q=${encodeURIComponent(q)}&page=${page}`
+		),
+	getCorporation: (corpId: number) =>
+		fetchJson<CorporationDetail>(`/corporations/${corpId}`),
+	searchAlliances: (q: string, page = 1) =>
+		fetchJson<AllianceSearchResult>(
+			`/alliances/search?q=${encodeURIComponent(q)}&page=${page}`
+		),
+	getAlliance: (allianceId: number) =>
+		fetchJson<AllianceDetail>(`/alliances/${allianceId}`)
 };

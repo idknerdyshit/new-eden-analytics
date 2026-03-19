@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,27 +7,9 @@ use nea_esi::EsiClient;
 use sqlx::PgPool;
 use tokio::time;
 
+use crate::fitting_utils::{is_fitted_slot, cluster_fittings, get_type_name};
+
 const WORKER_STATE_KEY: &str = "profile_aggregation_last_run";
-
-/// Fitted slot flag ranges in EVE Online.
-const HIGH_SLOT_START: i32 = 27;
-const HIGH_SLOT_END: i32 = 34;
-const MID_SLOT_START: i32 = 19;
-const MID_SLOT_END: i32 = 26;
-const LOW_SLOT_START: i32 = 11;
-const LOW_SLOT_END: i32 = 18;
-const RIG_SLOT_START: i32 = 92;
-const RIG_SLOT_END: i32 = 94;
-const SUBSYSTEM_START: i32 = 125;
-const SUBSYSTEM_END: i32 = 131;
-
-fn is_fitted_slot(flag: i32) -> bool {
-    (flag >= LOW_SLOT_START && flag <= LOW_SLOT_END)
-        || (flag >= MID_SLOT_START && flag <= MID_SLOT_END)
-        || (flag >= HIGH_SLOT_START && flag <= HIGH_SLOT_END)
-        || (flag >= RIG_SLOT_START && flag <= RIG_SLOT_END)
-        || (flag >= SUBSYSTEM_START && flag <= SUBSYSTEM_END)
-}
 
 pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
     tracing::info!("profile_aggregator task started");
@@ -275,13 +256,6 @@ async fn compute_profile(
     })
 }
 
-async fn get_type_name(pool: &PgPool, type_id: i32) -> String {
-    match nea_db::get_type(pool, type_id).await {
-        Ok(Some(t)) => t.name,
-        _ => format!("Type {}", type_id),
-    }
-}
-
 /// Compute common fittings from losses.
 /// Groups similar fittings (Jaccard similarity >= 0.8) into clusters.
 async fn compute_common_fits(
@@ -355,7 +329,7 @@ async fn compute_common_fits(
         }
 
         // Cluster fittings by Jaccard similarity >= 0.8
-        let clusters = cluster_fittings(&fittings);
+        let clusters = cluster_fittings(&fittings, 0.8);
 
         let ship_name = get_type_name(pool, *ship_type_id).await;
 
@@ -385,93 +359,3 @@ async fn compute_common_fits(
     Ok(all_fits)
 }
 
-struct FittingCluster {
-    canonical_idx: usize,
-    count: usize,
-    variant_count: usize,
-}
-
-fn cluster_fittings(fittings: &[Vec<(i32, i32)>]) -> Vec<FittingCluster> {
-    let fitting_sets: Vec<std::collections::HashSet<i32>> = fittings
-        .iter()
-        .map(|f| f.iter().map(|(type_id, _)| *type_id).collect())
-        .collect();
-
-    // Track which fittings are assigned to clusters
-    let mut assigned = vec![false; fittings.len()];
-    let mut clusters: Vec<FittingCluster> = Vec::new();
-
-    // Count exact duplicates for canonical selection
-    let mut exact_counts: HashMap<Vec<i32>, (usize, usize)> = HashMap::new(); // sorted type_ids -> (count, first_index)
-    for (i, f) in fittings.iter().enumerate() {
-        let mut sorted: Vec<i32> = f.iter().map(|(tid, _)| *tid).collect();
-        sorted.sort();
-        exact_counts
-            .entry(sorted)
-            .and_modify(|(c, _)| *c += 1)
-            .or_insert((1, i));
-    }
-
-    for i in 0..fittings.len() {
-        if assigned[i] {
-            continue;
-        }
-
-        assigned[i] = true;
-        let mut members = vec![i];
-
-        for j in (i + 1)..fittings.len() {
-            if assigned[j] {
-                continue;
-            }
-            let jaccard = jaccard_similarity(&fitting_sets[i], &fitting_sets[j]);
-            if jaccard >= 0.8 {
-                assigned[j] = true;
-                members.push(j);
-            }
-        }
-
-        // Find the canonical fit (most common exact fit in this cluster)
-        let mut best_idx = members[0];
-        let mut best_count = 0usize;
-        for &m in &members {
-            let mut sorted: Vec<i32> = fittings[m].iter().map(|(tid, _)| *tid).collect();
-            sorted.sort();
-            if let Some((count, _)) = exact_counts.get(&sorted) {
-                if *count > best_count {
-                    best_count = *count;
-                    best_idx = m;
-                }
-            }
-        }
-
-        let unique_fits: std::collections::HashSet<Vec<i32>> = members
-            .iter()
-            .map(|&m| {
-                let mut sorted: Vec<i32> = fittings[m].iter().map(|(tid, _)| *tid).collect();
-                sorted.sort();
-                sorted
-            })
-            .collect();
-
-        clusters.push(FittingCluster {
-            canonical_idx: best_idx,
-            count: members.len(),
-            variant_count: unique_fits.len(),
-        });
-    }
-
-    clusters
-}
-
-fn jaccard_similarity(a: &std::collections::HashSet<i32>, b: &std::collections::HashSet<i32>) -> f64 {
-    if a.is_empty() && b.is_empty() {
-        return 1.0;
-    }
-    let intersection = a.intersection(b).count();
-    let union = a.union(b).count();
-    if union == 0 {
-        return 0.0;
-    }
-    intersection as f64 / union as f64
-}

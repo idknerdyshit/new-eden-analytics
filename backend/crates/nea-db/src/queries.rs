@@ -978,6 +978,314 @@ pub async fn get_active_character_ids_since(
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Corporation / Alliance / Doctrine queries
+// ═══════════════════════════════════════════════════════════════════
+
+pub async fn upsert_corporation(pool: &PgPool, corp: &Corporation) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO corporations (corporation_id, name, alliance_id, member_count, fetched_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (corporation_id) DO UPDATE
+        SET name = EXCLUDED.name,
+            alliance_id = EXCLUDED.alliance_id,
+            member_count = EXCLUDED.member_count,
+            fetched_at = EXCLUDED.fetched_at
+        "#,
+    )
+    .bind(corp.corporation_id)
+    .bind(&corp.name)
+    .bind(corp.alliance_id)
+    .bind(corp.member_count)
+    .bind(corp.fetched_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_corporation(pool: &PgPool, corporation_id: i64) -> Result<Option<Corporation>, DbError> {
+    let row = sqlx::query_as::<_, Corporation>(
+        r#"
+        SELECT corporation_id, name, alliance_id, member_count, fetched_at
+        FROM corporations
+        WHERE corporation_id = $1
+        "#,
+    )
+    .bind(corporation_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn search_corporations(
+    pool: &PgPool,
+    query: &str,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<Corporation>, DbError> {
+    let start = Instant::now();
+    let pattern = format!("%{}%", query);
+    let rows = sqlx::query_as::<_, Corporation>(
+        r#"
+        SELECT corporation_id, name, alliance_id, member_count, fetched_at
+        FROM corporations
+        WHERE name ILIKE $1
+        ORDER BY name
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(&pattern)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(query, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "search_corporations");
+    Ok(rows)
+}
+
+pub async fn search_corporations_count(
+    pool: &PgPool,
+    query: &str,
+) -> Result<i64, DbError> {
+    let pattern = format!("%{}%", query);
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM corporations
+        WHERE name ILIKE $1
+        "#,
+    )
+    .bind(&pattern)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn upsert_alliance(pool: &PgPool, alliance: &Alliance) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO alliances (alliance_id, name, ticker, fetched_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (alliance_id) DO UPDATE
+        SET name = EXCLUDED.name,
+            ticker = EXCLUDED.ticker,
+            fetched_at = EXCLUDED.fetched_at
+        "#,
+    )
+    .bind(alliance.alliance_id)
+    .bind(&alliance.name)
+    .bind(&alliance.ticker)
+    .bind(alliance.fetched_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_alliance(pool: &PgPool, alliance_id: i64) -> Result<Option<Alliance>, DbError> {
+    let row = sqlx::query_as::<_, Alliance>(
+        r#"
+        SELECT alliance_id, name, ticker, fetched_at
+        FROM alliances
+        WHERE alliance_id = $1
+        "#,
+    )
+    .bind(alliance_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn search_alliances(
+    pool: &PgPool,
+    query: &str,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<Alliance>, DbError> {
+    let start = Instant::now();
+    let pattern = format!("%{}%", query);
+    let rows = sqlx::query_as::<_, Alliance>(
+        r#"
+        SELECT alliance_id, name, ticker, fetched_at
+        FROM alliances
+        WHERE name ILIKE $1
+        ORDER BY name
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(&pattern)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(query, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "search_alliances");
+    Ok(rows)
+}
+
+pub async fn search_alliances_count(
+    pool: &PgPool,
+    query: &str,
+) -> Result<i64, DbError> {
+    let pattern = format!("%{}%", query);
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM alliances
+        WHERE name ILIKE $1
+        "#,
+    )
+    .bind(&pattern)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn upsert_doctrine_profile(
+    pool: &PgPool,
+    profile: &DoctrineProfile,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        INSERT INTO doctrine_profiles
+            (entity_type, entity_id, entity_name, window_days, member_count,
+             total_kills, total_losses, ship_usage, doctrines, ship_trends, fleet_comps, computed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (entity_type, entity_id, window_days) DO UPDATE
+        SET entity_name = EXCLUDED.entity_name,
+            member_count = EXCLUDED.member_count,
+            total_kills = EXCLUDED.total_kills,
+            total_losses = EXCLUDED.total_losses,
+            ship_usage = EXCLUDED.ship_usage,
+            doctrines = EXCLUDED.doctrines,
+            ship_trends = EXCLUDED.ship_trends,
+            fleet_comps = EXCLUDED.fleet_comps,
+            computed_at = EXCLUDED.computed_at
+        "#,
+    )
+    .bind(&profile.entity_type)
+    .bind(profile.entity_id)
+    .bind(&profile.entity_name)
+    .bind(profile.window_days)
+    .bind(profile.member_count)
+    .bind(profile.total_kills)
+    .bind(profile.total_losses)
+    .bind(&profile.ship_usage)
+    .bind(&profile.doctrines)
+    .bind(&profile.ship_trends)
+    .bind(&profile.fleet_comps)
+    .bind(profile.computed_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_doctrine_profiles(
+    pool: &PgPool,
+    entity_type: &str,
+    entity_id: i64,
+) -> Result<Vec<DoctrineProfile>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, DoctrineProfile>(
+        r#"
+        SELECT id, entity_type, entity_id, entity_name, window_days, member_count,
+               total_kills, total_losses, ship_usage, doctrines, ship_trends, fleet_comps, computed_at
+        FROM doctrine_profiles
+        WHERE entity_type = $1 AND entity_id = $2
+        ORDER BY window_days
+        "#,
+    )
+    .bind(entity_type)
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    debug!(entity_type, entity_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_doctrine_profiles");
+    Ok(rows)
+}
+
+pub async fn get_active_corporation_ids_since(
+    pool: &PgPool,
+    since: DateTime<Utc>,
+) -> Result<Vec<i64>, DbError> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT corporation_id FROM (
+            SELECT corporation_id FROM killmail_attackers
+            WHERE corporation_id IS NOT NULL AND kill_time > $1
+            UNION
+            SELECT corporation_id FROM killmail_victims
+            WHERE corporation_id IS NOT NULL AND kill_time > $1
+        ) active
+        "#,
+    )
+    .bind(since)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+pub async fn get_active_alliance_ids_since(
+    pool: &PgPool,
+    since: DateTime<Utc>,
+) -> Result<Vec<i64>, DbError> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT alliance_id FROM (
+            SELECT alliance_id FROM killmail_attackers
+            WHERE alliance_id IS NOT NULL AND kill_time > $1
+            UNION
+            SELECT alliance_id FROM killmail_victims
+            WHERE alliance_id IS NOT NULL AND kill_time > $1
+        ) active
+        "#,
+    )
+    .bind(since)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+pub async fn get_uncached_corporation_ids(
+    pool: &PgPool,
+    limit: i32,
+) -> Result<Vec<i64>, DbError> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT corporation_id FROM (
+            SELECT DISTINCT corporation_id FROM killmail_attackers WHERE corporation_id IS NOT NULL
+            UNION
+            SELECT DISTINCT corporation_id FROM killmail_victims WHERE corporation_id IS NOT NULL
+        ) all_corps
+        WHERE corporation_id NOT IN (SELECT corporation_id FROM corporations)
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+pub async fn get_uncached_alliance_ids(
+    pool: &PgPool,
+    limit: i32,
+) -> Result<Vec<i64>, DbError> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT alliance_id FROM (
+            SELECT DISTINCT alliance_id FROM killmail_attackers WHERE alliance_id IS NOT NULL
+            UNION
+            SELECT DISTINCT alliance_id FROM killmail_victims WHERE alliance_id IS NOT NULL
+        ) all_alliances
+        WHERE alliance_id NOT IN (SELECT alliance_id FROM alliances)
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
