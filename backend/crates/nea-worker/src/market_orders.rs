@@ -5,7 +5,6 @@ use chrono::Utc;
 use nea_db::MarketSnapshot;
 use nea_esi::{EsiClient, JITA_STATION, THE_FORGE};
 use sqlx::PgPool;
-use tokio::sync::Semaphore;
 use tokio::time;
 
 pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
@@ -29,50 +28,22 @@ pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
             type_ids.len()
         );
 
-        let semaphore = Arc::new(Semaphore::new(5));
         let mut fetched = 0u64;
         let mut errors = 0u64;
 
-        for chunk in type_ids.chunks(50) {
-            let mut handles = Vec::with_capacity(chunk.len());
-
-            for type_id in chunk {
-                let permit = match semaphore.clone().acquire_owned().await {
-                    Ok(p) => p,
-                    Err(_) => {
-                        tracing::error!("market_orders: semaphore closed, aborting cycle");
-                        break;
-                    }
-                };
-                let esi = Arc::clone(&esi);
-                let pool = pool.clone();
-                let type_id = *type_id;
-
-                handles.push(tokio::spawn(async move {
-                    let _permit = permit;
-                    let result = fetch_and_snapshot(&pool, &esi, type_id).await;
-                    (type_id, result)
-                }));
-            }
-
-            for handle in handles {
-                match handle.await {
-                    Ok((_type_id, Ok(()))) => {
-                        fetched += 1;
-                    }
-                    Ok((type_id, Err(e))) => {
-                        tracing::warn!(type_id, "market_orders: fetch error: {e}");
-                        errors += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!("market_orders: task join error: {e}");
-                        errors += 1;
-                    }
+        for type_id in &type_ids {
+            match fetch_and_snapshot(&pool, &esi, *type_id).await {
+                Ok(()) => {
+                    fetched += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(type_id, "market_orders: fetch error: {e}");
+                    errors += 1;
                 }
             }
 
-            // Brief pause between batches to stay under ESI rate limits
-            time::sleep(Duration::from_secs(1)).await;
+            // ~2 req/s to ease ESI pressure
+            time::sleep(Duration::from_millis(500)).await;
 
             // If error budget is critically low, pause longer
             if esi.error_budget() < 30 {
