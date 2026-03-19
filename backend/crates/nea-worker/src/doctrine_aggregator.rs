@@ -150,6 +150,17 @@ async fn resolve_corporation_names(pool: &PgPool, esi: &EsiClient) {
                     resolved += 1;
                 }
             }
+            Err(nea_esi::EsiError::Api { status: 404, .. }) => {
+                tracing::debug!(corp_id, "doctrine_aggregator: corporation not found on ESI (404), caching placeholder");
+                let placeholder = nea_db::Corporation {
+                    corporation_id: corp_id,
+                    name: format!("Unknown Corp {}", corp_id),
+                    alliance_id: None,
+                    member_count: None,
+                    fetched_at: Utc::now(),
+                };
+                let _ = nea_db::upsert_corporation(pool, &placeholder).await;
+            }
             Err(e) => {
                 tracing::debug!(corp_id, "doctrine_aggregator: failed to fetch corporation from ESI: {e}");
             }
@@ -190,6 +201,16 @@ async fn resolve_alliance_names(pool: &PgPool, esi: &EsiClient) {
                 } else {
                     resolved += 1;
                 }
+            }
+            Err(nea_esi::EsiError::Api { status: 404, .. }) => {
+                tracing::debug!(alliance_id, "doctrine_aggregator: alliance not found on ESI (404), caching placeholder");
+                let placeholder = nea_db::Alliance {
+                    alliance_id,
+                    name: format!("Unknown Alliance {}", alliance_id),
+                    ticker: None,
+                    fetched_at: Utc::now(),
+                };
+                let _ = nea_db::upsert_alliance(pool, &placeholder).await;
             }
             Err(e) => {
                 tracing::debug!(alliance_id, "doctrine_aggregator: failed to fetch alliance from ESI: {e}");

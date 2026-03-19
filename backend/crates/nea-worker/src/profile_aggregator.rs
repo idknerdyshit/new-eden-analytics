@@ -97,6 +97,17 @@ async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
                     resolved += 1;
                 }
             }
+            Err(nea_esi::EsiError::Api { status: 404, .. }) => {
+                tracing::debug!(character_id, "profile_aggregator: character not found on ESI (404), caching placeholder");
+                let placeholder = nea_db::Character {
+                    character_id,
+                    name: format!("Unknown {}", character_id),
+                    corporation_id: None,
+                    alliance_id: None,
+                    fetched_at: Utc::now(),
+                };
+                let _ = nea_db::upsert_character(pool, &placeholder).await;
+            }
             Err(e) => {
                 tracing::debug!(character_id, "profile_aggregator: failed to fetch character from ESI: {e}");
             }
