@@ -12,7 +12,16 @@
 	} from '$lib/api/client';
 	import { formatNumber } from '$lib/utils/formatters';
 	import FittingCard from '$lib/components/FittingCard.svelte';
+	import VariantOverlay from '$lib/components/VariantOverlay.svelte';
 	import KillLossTabs from '$lib/components/KillLossTabs.svelte';
+	import type { FittingModule } from '$lib/api/client';
+
+	let variantOverlay = $state<{
+		ship_type_id: number;
+		ship_name: string;
+		canonical_fit: FittingModule[];
+		variants: FittingModule[][];
+	} | null>(null);
 
 	let corpId = $derived(Number($page.params.corpId));
 
@@ -248,26 +257,17 @@
 												/>
 
 												{#if ship.variants && ship.variants.length > 0}
-													<details class="mt-2">
-														<summary
-															class="cursor-pointer text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-														>
-															{ship.variants.length} variant fit{ship.variants.length !== 1 ? 's' : ''}
-														</summary>
-														<div class="mt-2 space-y-2 pl-2 border-l-2 border-[var(--color-border)]">
-															{#each ship.variants as variant}
-																<FittingCard
-																	fitting={{
-																		ship_type_id: ship.ship_type_id,
-																		ship_name: ship.ship_name,
-																		modules: variant,
-																		count: 0,
-																		variant_count: 0
-																	}}
-																/>
-															{/each}
-														</div>
-													</details>
+													<button
+														class="mt-2 rounded bg-[var(--color-bg-tertiary)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)] transition-colors"
+														onclick={() => (variantOverlay = {
+															ship_type_id: ship.ship_type_id,
+															ship_name: ship.ship_name,
+															canonical_fit: ship.canonical_fit,
+															variants: ship.variants
+														})}
+													>
+														{ship.variants.length} variant{ship.variants.length !== 1 ? 's' : ''} — compare
+													</button>
 												{/if}
 											{:else}
 												<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
@@ -405,3 +405,13 @@
 		<KillLossTabs entityType="corporation" entityId={corpId} />
 	{/if}
 </div>
+
+{#if variantOverlay}
+	<VariantOverlay
+		ship_type_id={variantOverlay.ship_type_id}
+		ship_name={variantOverlay.ship_name}
+		canonical_fit={variantOverlay.canonical_fit}
+		variants={variantOverlay.variants}
+		onclose={() => (variantOverlay = null)}
+	/>
+{/if}
