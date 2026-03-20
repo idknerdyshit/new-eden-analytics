@@ -1,12 +1,69 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use nea_db::models::{DailyDestruction, Killmail, KillmailAttacker, KillmailItem, KillmailVictim};
 use nea_esi::EsiClient;
 use nea_zkill::R2z2Client;
+use serde::Deserialize;
 use sqlx::PgPool;
 use tracing::{info, warn};
+
+// ---------------------------------------------------------------------------
+// Local killmail types with tolerant deserialization
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct LocalKillmail {
+    killmail_id: i64,
+    killmail_time: DateTime<Utc>,
+    solar_system_id: i32,
+    victim: LocalVictim,
+    #[serde(default)]
+    attackers: Vec<LocalAttacker>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalVictim {
+    ship_type_id: i32,
+    #[serde(default)]
+    character_id: Option<i64>,
+    #[serde(default)]
+    corporation_id: Option<i64>,
+    #[serde(default)]
+    alliance_id: Option<i64>,
+    #[serde(default)]
+    items: Vec<LocalItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalItem {
+    item_type_id: i32,
+    #[serde(default)]
+    quantity_destroyed: Option<i64>,
+    #[serde(default)]
+    quantity_dropped: Option<i64>,
+    #[serde(default)]
+    flag: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAttacker {
+    #[serde(default)]
+    character_id: Option<i64>,
+    #[serde(default)]
+    corporation_id: Option<i64>,
+    #[serde(default)]
+    alliance_id: Option<i64>,
+    #[serde(default)]
+    ship_type_id: i32,
+    #[serde(default)]
+    weapon_type_id: i32,
+    #[serde(default)]
+    damage_done: i32,
+    #[serde(default)]
+    final_blow: bool,
+}
 
 /// Check error budget every N killmails.
 const BATCH_SIZE: usize = 20;
@@ -223,7 +280,9 @@ async fn process_killmail(
     killmail_id: i64,
     killmail_hash: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let km = esi.get_killmail_typed(killmail_id, killmail_hash).await?;
+    let raw = esi.get_killmail(killmail_id, killmail_hash).await?;
+    let km: LocalKillmail = serde_json::from_value(raw)
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
     let kill_time = km.killmail_time;
 
     let killmail = Killmail {
