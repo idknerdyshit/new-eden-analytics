@@ -17,7 +17,7 @@ pub struct DestructionParams {
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/destruction/:type_id", get(destruction))
+    Router::new().route("/destruction/{type_id}", get(destruction))
 }
 
 #[tracing::instrument(skip(state, params))]

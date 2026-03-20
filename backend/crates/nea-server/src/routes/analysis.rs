@@ -20,7 +20,7 @@ pub struct TopParams {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/analysis/:type_id/correlations", get(correlations))
+        .route("/analysis/{type_id}/correlations", get(correlations))
         .route("/analysis/top", get(top))
         .route("/analysis/run", post(run_analysis))
         .route("/analysis/status", get(analysis_status))

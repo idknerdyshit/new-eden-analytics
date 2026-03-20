@@ -34,7 +34,7 @@ pub struct AllianceDetail {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/alliances/search", get(search_alliances))
-        .route("/alliances/:alliance_id", get(get_alliance))
+        .route("/alliances/{alliance_id}", get(get_alliance))
 }
 
 #[tracing::instrument(skip(state, params))]

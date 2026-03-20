@@ -39,9 +39,9 @@ pub struct LimitParams {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/characters/search", get(search_characters))
-        .route("/characters/:character_id", get(get_character))
-        .route("/characters/:character_id/kills", get(get_character_kills))
-        .route("/characters/:character_id/losses", get(get_character_losses))
+        .route("/characters/{character_id}", get(get_character))
+        .route("/characters/{character_id}/kills", get(get_character_kills))
+        .route("/characters/{character_id}/losses", get(get_character_losses))
 }
 
 #[tracing::instrument(skip(state, params))]

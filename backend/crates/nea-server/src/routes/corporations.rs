@@ -34,7 +34,7 @@ pub struct CorporationDetail {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/corporations/search", get(search_corporations))
-        .route("/corporations/:corp_id", get(get_corporation))
+        .route("/corporations/{corp_id}", get(get_corporation))
 }
 
 #[tracing::instrument(skip(state, params))]

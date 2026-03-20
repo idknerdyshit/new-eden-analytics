@@ -26,8 +26,8 @@ pub struct SnapshotParams {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/market/:type_id/history", get(history))
-        .route("/market/:type_id/snapshots", get(snapshots))
+        .route("/market/{type_id}/history", get(history))
+        .route("/market/{type_id}/snapshots", get(snapshots))
 }
 
 #[tracing::instrument(skip(state, params))]

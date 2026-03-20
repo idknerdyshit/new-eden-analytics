@@ -35,7 +35,7 @@ pub struct ItemDetail {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/items", get(search_items))
-        .route("/items/:type_id", get(get_item))
+        .route("/items/{type_id}", get(get_item))
 }
 
 #[tracing::instrument(skip(state, params))]
