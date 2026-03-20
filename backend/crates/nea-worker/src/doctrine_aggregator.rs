@@ -368,152 +368,192 @@ struct ShipFitData {
     pilot_count: usize,
 }
 
+/// An engagement is a cluster of kills in the same solar system within a
+/// short time window, representing a single fleet fight.
+struct Engagement {
+    kill_ids: Vec<i64>,
+    ship_types: HashSet<i32>,
+    pilot_count: u32,
+    system_id: i32,
+}
+
 async fn compute_doctrines(
     pool: &PgPool,
     column: &str,
     entity_id: i64,
     window_days: i32,
 ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
-    // ── Step 1: Get attack compositions per killmail ──────────────────
+    // ── Step 1: Fetch attacker data with location ────────────────────
     let query = format!(
         r#"
-        SELECT killmail_id, ship_type_id
-        FROM killmail_attackers
-        WHERE {} = $1
-          AND kill_time >= NOW() - $2 * INTERVAL '1 day'
-          AND ship_type_id > 0
+        SELECT a.killmail_id, a.ship_type_id, a.kill_time, k.solar_system_id
+        FROM killmail_attackers a
+        JOIN killmails k ON a.killmail_id = k.killmail_id AND a.kill_time = k.kill_time
+        WHERE a.{col} = $1
+          AND a.kill_time >= NOW() - $2 * INTERVAL '1 day'
+          AND a.ship_type_id > 0
+          AND k.solar_system_id IS NOT NULL
+        ORDER BY k.solar_system_id, a.kill_time
         "#,
-        column
+        col = column
     );
-    let attack_rows: Vec<(i64, i32)> = sqlx::query_as(&query)
+    let attack_rows: Vec<(i64, i32, chrono::DateTime<Utc>, i32)> = sqlx::query_as(&query)
         .bind(entity_id)
         .bind(window_days)
         .fetch_all(pool)
         .await?;
 
-    // killmail_id → set of ship_type_ids on that kill
-    let mut kill_ships: HashMap<i64, HashSet<i32>> = HashMap::new();
-    // ship_type_id → set of killmail_ids it appears on
-    let mut ship_kills: HashMap<i32, HashSet<i64>> = HashMap::new();
-    // killmail_id → total entity attackers on that kill
-    let mut kill_attacker_count: HashMap<i64, u32> = HashMap::new();
-    // (killmail_id, ship_type_id) → count of entity pilots flying that ship on that kill
-    let mut kill_ship_count: HashMap<(i64, i32), u32> = HashMap::new();
-    for (km_id, type_id) in &attack_rows {
-        kill_ships.entry(*km_id).or_default().insert(*type_id);
-        ship_kills.entry(*type_id).or_default().insert(*km_id);
-        *kill_attacker_count.entry(*km_id).or_insert(0) += 1;
-        *kill_ship_count.entry((*km_id, *type_id)).or_insert(0) += 1;
+    if attack_rows.is_empty() {
+        return Ok(Vec::new());
     }
 
-    // Only consider ships with ≥5 appearances
-    let active_ships: HashSet<i32> = ship_kills
-        .iter()
-        .filter(|(_, kms)| kms.len() >= 5)
-        .map(|(tid, _)| *tid)
-        .collect();
+    // ── Step 2: Group kills into engagements ─────────────────────────
+    // An engagement = kills in the same system within ±15 min of each other.
+    // First, collect per-killmail data.
+    struct KillInfo {
+        time: chrono::DateTime<Utc>,
+        system_id: i32,
+        ship_types: HashSet<i32>,
+        pilot_count: u32,
+    }
+    let mut kill_map: HashMap<i64, KillInfo> = HashMap::new();
+    for (km_id, ship_type_id, kill_time, system_id) in &attack_rows {
+        let entry = kill_map.entry(*km_id).or_insert_with(|| KillInfo {
+            time: *kill_time,
+            system_id: *system_id,
+            ship_types: HashSet::new(),
+            pilot_count: 0,
+        });
+        entry.ship_types.insert(*ship_type_id);
+        entry.pilot_count += 1;
+    }
 
-    // ── Step 2: Pairwise co-occurrence → union-find grouping ─────────
-    let active_list: Vec<i32> = active_ships.iter().copied().collect();
-    let mut parent: Vec<usize> = (0..active_list.len()).collect();
+    // Sort kills by (system, time) then merge into engagements
+    let mut kills_sorted: Vec<(i64, &KillInfo)> = kill_map.iter().map(|(id, info)| (*id, info)).collect();
+    kills_sorted.sort_by(|a, b| {
+        a.1.system_id.cmp(&b.1.system_id).then(a.1.time.cmp(&b.1.time))
+    });
 
-    fn find(parent: &mut [usize], x: usize) -> usize {
-        if parent[x] != x {
-            parent[x] = find(parent, parent[x]);
+    let engagement_window = chrono::Duration::minutes(15);
+    let mut engagements: Vec<Engagement> = Vec::new();
+
+    for (km_id, info) in &kills_sorted {
+        let merged = engagements.last_mut().and_then(|eng| {
+            if eng.system_id == info.system_id && (info.time - eng.kill_ids.iter()
+                .filter_map(|id| kill_map.get(id))
+                .map(|k| k.time)
+                .max()
+                .unwrap_or(info.time)).abs() <= engagement_window
+            {
+                Some(eng)
+            } else {
+                None
+            }
+        });
+        if let Some(eng) = merged {
+            eng.kill_ids.push(*km_id);
+            eng.ship_types.extend(&info.ship_types);
+            eng.pilot_count += info.pilot_count;
+        } else {
+            engagements.push(Engagement {
+                kill_ids: vec![*km_id],
+                ship_types: info.ship_types.clone(),
+                pilot_count: info.pilot_count,
+                system_id: info.system_id,
+            });
         }
-        parent[x]
-    }
-    fn union(parent: &mut [usize], a: usize, b: usize) {
-        let ra = find(parent, a);
-        let rb = find(parent, b);
-        if ra != rb {
-            parent[rb] = ra;
-        }
     }
 
-    for i in 0..active_list.len() {
-        let kms_i = &ship_kills[&active_list[i]];
-        for j in (i + 1)..active_list.len() {
-            let kms_j = &ship_kills[&active_list[j]];
-            let shared = kms_i.intersection(kms_j).count();
-            let min_size = kms_i.len().min(kms_j.len());
-            // Ships that co-occur on ≥30% of the rarer ship's kills
-            if min_size > 0 && shared as f64 / min_size as f64 >= 0.3 {
-                union(&mut parent, i, j);
+    // Only keep engagements with ≥5 entity pilots (real fleet fights)
+    engagements.retain(|e| e.pilot_count >= 5);
+
+    if engagements.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    tracing::debug!(
+        entity_id,
+        engagements = engagements.len(),
+        "doctrine_aggregator: built engagements"
+    );
+
+    // ── Step 3: Cluster engagements by composition similarity ────────
+    // Greedy seed-expansion: pick the largest unassigned engagement as seed,
+    // find all engagements with Jaccard ≥ 0.4 to the seed's ship-type set,
+    // then extract core ship types present in ≥30% of cluster engagements.
+    let mut assigned = vec![false; engagements.len()];
+    let mut doctrine_groups: Vec<Vec<i32>> = Vec::new();
+    // Track which engagements belong to each doctrine for support ship assignment
+    let mut doctrine_engagement_kills: Vec<HashSet<i64>> = Vec::new();
+
+    // Sort indices by pilot_count descending for seed selection
+    let mut indices: Vec<usize> = (0..engagements.len()).collect();
+    indices.sort_by(|a, b| engagements[*b].pilot_count.cmp(&engagements[*a].pilot_count));
+
+    for &seed_idx in &indices {
+        if assigned[seed_idx] {
+            continue;
+        }
+        assigned[seed_idx] = true;
+
+        let seed_types = &engagements[seed_idx].ship_types;
+        let mut cluster_indices = vec![seed_idx];
+
+        for &j in &indices {
+            if assigned[j] {
+                continue;
+            }
+            let jaccard = jaccard_i32(seed_types, &engagements[j].ship_types);
+            if jaccard >= 0.4 {
+                assigned[j] = true;
+                cluster_indices.push(j);
             }
         }
-    }
 
-    let mut groups_map: HashMap<usize, Vec<i32>> = HashMap::new();
-    for i in 0..active_list.len() {
-        let root = find(&mut parent, i);
-        groups_map.entry(root).or_default().push(active_list[i]);
-    }
+        // Need ≥5 engagements to call it a recurring doctrine
+        if cluster_indices.len() < 5 {
+            continue;
+        }
 
-    // Only keep groups with ≥2 ship types
-    let mut doctrine_groups: Vec<Vec<i32>> = groups_map
-        .into_values()
-        .filter(|g| g.len() >= 2)
-        .collect();
-
-    // ── Step 2b: Filter ships by fleet share (≥5% of pilots) ─────────
-    // For each group, find the killmails where the group is active (any
-    // group member present), then compute each ship's average fleet share.
-    for group in &mut doctrine_groups {
-        // Collect all killmails where any group member attacks
-        let group_killmails: HashSet<i64> = group
-            .iter()
-            .filter_map(|tid| ship_kills.get(tid))
-            .flat_map(|kms| kms.iter().copied())
+        // Extract core ship types: present in ≥30% of cluster engagements
+        let mut type_counts: HashMap<i32, usize> = HashMap::new();
+        for &ci in &cluster_indices {
+            for &tid in &engagements[ci].ship_types {
+                *type_counts.entry(tid).or_insert(0) += 1;
+            }
+        }
+        let threshold = (cluster_indices.len() as f64 * 0.3).ceil() as usize;
+        let core_types: Vec<i32> = type_counts
+            .into_iter()
+            .filter(|(_, count)| *count >= threshold)
+            .map(|(tid, _)| tid)
             .collect();
 
-        group.retain(|tid| {
-            let kms = match ship_kills.get(tid) {
-                Some(k) => k,
-                None => return false,
-            };
-            // Average fleet share across killmails where this ship appears
-            let mut total_share = 0.0f64;
-            let mut count = 0u32;
-            for km_id in kms.iter().filter(|k| group_killmails.contains(k)) {
-                let pilots_in_ship = *kill_ship_count.get(&(*km_id, *tid)).unwrap_or(&0) as f64;
-                let total_pilots = *kill_attacker_count.get(km_id).unwrap_or(&1) as f64;
-                total_share += pilots_in_ship / total_pilots;
-                count += 1;
-            }
-            let avg_share = if count > 0 { total_share / count as f64 } else { 0.0 };
-            avg_share >= 0.05 // ≥5% of fleet
-        });
+        if core_types.len() >= 2 {
+            // Collect all kill IDs for this doctrine's engagements
+            let kills: HashSet<i64> = cluster_indices
+                .iter()
+                .flat_map(|&ci| engagements[ci].kill_ids.iter().copied())
+                .collect();
+            doctrine_engagement_kills.push(kills);
+            doctrine_groups.push(core_types);
+        }
     }
 
-    // Re-filter: only keep groups that still have ≥2 ship types after pruning
-    doctrine_groups.retain(|g| g.len() >= 2);
-
-    // ── Step 3: Detect support ships via temporal-spatial correlation ─
+    // ── Step 4: Detect support ships via temporal-spatial correlation ─
     let support_ships = detect_support_ships(pool, column, entity_id, window_days).await;
 
-    // For each support ship loss event, determine which doctrine group was
-    // active at that engagement (by checking which group's ships attacked
-    // in the same kill cluster).
     for (support_type_id, nearby_kill_ids) in &support_ships {
-        // Already in a group?
         if doctrine_groups.iter().any(|g| g.contains(support_type_id)) {
             continue;
         }
 
-        // Find which doctrine group's ships appear most in those nearby kills
+        // Find which doctrine group has the most overlap with this support
+        // ship's nearby kills
         let mut best_group_idx: Option<usize> = None;
         let mut best_overlap = 0usize;
-        for (gi, group) in doctrine_groups.iter().enumerate() {
-            let overlap: usize = group
-                .iter()
-                .map(|tid| {
-                    ship_kills
-                        .get(tid)
-                        .map(|kms| kms.intersection(nearby_kill_ids).count())
-                        .unwrap_or(0)
-                })
-                .sum();
+        for (gi, kills) in doctrine_engagement_kills.iter().enumerate() {
+            let overlap = nearby_kill_ids.intersection(kills).count();
             if overlap > best_overlap {
                 best_overlap = overlap;
                 best_group_idx = Some(gi);
@@ -521,22 +561,15 @@ async fn compute_doctrines(
         }
 
         if let Some(gi) = best_group_idx {
-            // The support ship must appear near ≥5% of the group's total kills
-            let group_total_kills: usize = doctrine_groups[gi]
-                .iter()
-                .filter_map(|tid| ship_kills.get(tid))
-                .flat_map(|kms| kms.iter())
-                .collect::<HashSet<_>>()
-                .len();
-            let threshold = (group_total_kills as f64 * 0.05).max(3.0) as usize;
+            let group_total = doctrine_engagement_kills[gi].len();
+            let threshold = (group_total as f64 * 0.05).max(3.0) as usize;
             if best_overlap >= threshold {
                 doctrine_groups[gi].push(*support_type_id);
             }
         }
     }
 
-    // ── Step 4: Compute per-ship fitting data from losses ────────────
-    // Collect all ship types we need fits for
+    // ── Step 5: Compute per-ship fitting data from losses ────────────
     let mut all_doctrine_ship_ids: HashSet<i32> = HashSet::new();
     for group in &doctrine_groups {
         for tid in group {
@@ -551,7 +584,7 @@ async fn compute_doctrines(
         }
     }
 
-    // ── Step 5: Assemble output ──────────────────────────────────────
+    // ── Step 6: Assemble output ──────────────────────────────────────
     let mut result = Vec::new();
     for group in &doctrine_groups {
         let ships: Vec<serde_json::Value> = group
@@ -567,7 +600,6 @@ async fn compute_doctrines(
                         "pilot_count": d.pilot_count,
                     })
                 } else {
-                    // Ship in fleet comp but no loss data for fitting
                     let name = tid.to_string(); // resolved below
                     serde_json::json!({
                         "ship_type_id": tid,
@@ -583,7 +615,7 @@ async fn compute_doctrines(
         result.push(serde_json::json!({ "ships": ships }));
     }
 
-    // Resolve names for ships without fit data (inline after assembly)
+    // Resolve names for ships without fit data
     for group_val in &mut result {
         if let Some(ships) = group_val.get_mut("ships").and_then(|s| s.as_array_mut()) {
             for ship in ships.iter_mut() {
@@ -598,6 +630,15 @@ async fn compute_doctrines(
     }
 
     Ok(result)
+}
+
+fn jaccard_i32(a: &HashSet<i32>, b: &HashSet<i32>) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    let intersection = a.intersection(b).count();
+    let union = a.union(b).count();
+    if union == 0 { 0.0 } else { intersection as f64 / union as f64 }
 }
 
 /// Compute fitting clusters for a single ship type from entity's loss killmails.
