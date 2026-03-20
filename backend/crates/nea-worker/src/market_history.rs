@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::NaiveDate;
 use nea_db::MarketHistory;
 use nea_esi::{EsiClient, EsiError, THE_FORGE};
 use sqlx::PgPool;
@@ -16,18 +15,15 @@ fn convert_history(
 ) -> Vec<MarketHistory> {
     entries
         .iter()
-        .filter_map(|e| {
-            let date = NaiveDate::parse_from_str(&e.date, "%Y-%m-%d").ok()?;
-            Some(MarketHistory {
-                type_id,
-                region_id,
-                date,
-                average: e.average,
-                highest: e.highest,
-                lowest: e.lowest,
-                volume: e.volume,
-                order_count: e.order_count as i32,
-            })
+        .map(|e| MarketHistory {
+            type_id,
+            region_id,
+            date: e.date,
+            average: e.average,
+            highest: e.highest,
+            lowest: e.lowest,
+            volume: e.volume,
+            order_count: e.order_count as i32,
         })
         .collect()
 }
@@ -121,11 +117,12 @@ pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
     use nea_esi::EsiMarketHistoryEntry;
 
-    fn entry(date: &str, avg: f64, high: f64, low: f64, vol: i64, orders: i64) -> EsiMarketHistoryEntry {
+    fn entry(date: NaiveDate, avg: f64, high: f64, low: f64, vol: i64, orders: i64) -> EsiMarketHistoryEntry {
         EsiMarketHistoryEntry {
-            date: date.to_string(),
+            date,
             average: avg,
             highest: high,
             lowest: low,
@@ -136,27 +133,15 @@ mod tests {
 
     #[test]
     fn test_convert_history_valid() {
-        let entries = vec![entry("2026-03-01", 5.25, 5.30, 5.10, 1000, 50)];
+        let d = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+        let entries = vec![entry(d, 5.25, 5.30, 5.10, 1000, 50)];
         let result = convert_history(34, 10000002, &entries);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].type_id, 34);
         assert_eq!(result[0].region_id, 10000002);
-        assert_eq!(result[0].date, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap());
+        assert_eq!(result[0].date, d);
         assert!((result[0].average - 5.25).abs() < f64::EPSILON);
         assert_eq!(result[0].order_count, 50);
-    }
-
-    #[test]
-    fn test_convert_history_invalid_date_filtered() {
-        let entries = vec![
-            entry("2026-03-01", 5.25, 5.30, 5.10, 1000, 50),
-            entry("not-a-date", 1.0, 1.0, 1.0, 1, 1),
-            entry("2026-03-02", 6.0, 6.5, 5.5, 2000, 100),
-        ];
-        let result = convert_history(34, 10000002, &entries);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].date, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap());
-        assert_eq!(result[1].date, NaiveDate::from_ymd_opt(2026, 3, 2).unwrap());
     }
 
     #[test]

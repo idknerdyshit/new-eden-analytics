@@ -224,7 +224,7 @@ async fn process_killmail(
     killmail_hash: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let km = esi.get_killmail_typed(killmail_id, killmail_hash).await?;
-    let kill_time = nea_zkill::parse_killmail_time(&km.killmail_time);
+    let kill_time = km.killmail_time;
 
     let killmail = Killmail {
         killmail_id: km.killmail_id,

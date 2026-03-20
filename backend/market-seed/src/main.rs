@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::NaiveDate;
 use nea_db::MarketHistory;
 use nea_esi::{EsiClient, EsiError, THE_FORGE};
 use sqlx::PgPool;
@@ -36,18 +35,15 @@ fn convert_history(
 ) -> Vec<MarketHistory> {
     entries
         .iter()
-        .filter_map(|e| {
-            let date = NaiveDate::parse_from_str(&e.date, "%Y-%m-%d").ok()?;
-            Some(MarketHistory {
-                type_id,
-                region_id,
-                date,
-                average: e.average,
-                highest: e.highest,
-                lowest: e.lowest,
-                volume: e.volume,
-                order_count: e.order_count as i32,
-            })
+        .map(|e| MarketHistory {
+            type_id,
+            region_id,
+            date: e.date,
+            average: e.average,
+            highest: e.highest,
+            lowest: e.lowest,
+            volume: e.volume,
+            order_count: e.order_count as i32,
         })
         .collect()
 }

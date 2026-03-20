@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use nea_db::MarketSnapshot;
-use nea_esi::{EsiClient, EsiError, JITA_STATION, THE_FORGE};
+use nea_esi::{compute_best_bid_ask, EsiClient, EsiError, JITA_STATION, THE_FORGE};
 use sqlx::PgPool;
 use tokio::time;
 
@@ -104,7 +104,7 @@ async fn fetch_and_snapshot(
         Err(e) => return Err(e.into()),
     };
     let (best_bid, best_ask, bid_volume, ask_volume) =
-        EsiClient::compute_best_bid_ask(&orders, JITA_STATION);
+        compute_best_bid_ask(&orders, JITA_STATION);
 
     let spread = compute_spread(best_bid, best_ask);
 
