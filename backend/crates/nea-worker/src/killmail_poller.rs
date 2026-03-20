@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -69,19 +70,27 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 }
 
                 // Insert items
-                let items: Vec<KillmailItem> = esi
-                    .victim
-                    .items
-                    .iter()
-                    .map(|item| KillmailItem {
-                        killmail_id: response.killmail_id,
-                        kill_time,
-                        type_id: item.item_type_id,
-                        quantity_destroyed: item.quantity_destroyed.unwrap_or(0),
-                        quantity_dropped: item.quantity_dropped.unwrap_or(0),
-                        flag: item.flag,
-                    })
-                    .collect();
+                // Deduplicate items by (type_id, flag) — ESI can report
+                // multiple stacks with the same key (e.g. ammo in cargo).
+                let mut item_map: HashMap<(i32, i32), KillmailItem> = HashMap::new();
+                for item in &esi.victim.items {
+                    let key = (item.item_type_id, item.flag);
+                    item_map
+                        .entry(key)
+                        .and_modify(|e| {
+                            e.quantity_destroyed += item.quantity_destroyed.unwrap_or(0);
+                            e.quantity_dropped += item.quantity_dropped.unwrap_or(0);
+                        })
+                        .or_insert(KillmailItem {
+                            killmail_id: response.killmail_id,
+                            kill_time,
+                            type_id: item.item_type_id,
+                            quantity_destroyed: item.quantity_destroyed.unwrap_or(0),
+                            quantity_dropped: item.quantity_dropped.unwrap_or(0),
+                            flag: item.flag,
+                        });
+                }
+                let items: Vec<KillmailItem> = item_map.into_values().collect();
 
                 if let Err(e) = nea_db::insert_killmail_items(&pool, &items).await {
                     tracing::warn!(

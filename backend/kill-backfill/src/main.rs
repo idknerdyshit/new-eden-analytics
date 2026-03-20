@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate, Utc};
@@ -235,19 +236,27 @@ async fn process_killmail(
 
     nea_db::insert_killmail(pool, &killmail).await?;
 
-    let items: Vec<KillmailItem> = km
-        .victim
-        .items
-        .iter()
-        .map(|i| KillmailItem {
-            killmail_id: km.killmail_id,
-            kill_time,
-            type_id: i.item_type_id,
-            quantity_destroyed: i.quantity_destroyed.unwrap_or(0),
-            quantity_dropped: i.quantity_dropped.unwrap_or(0),
-            flag: i.flag,
-        })
-        .collect();
+    // Deduplicate items by (type_id, flag) — ESI can report
+    // multiple stacks with the same key (e.g. ammo in cargo).
+    let mut item_map: HashMap<(i32, i32), KillmailItem> = HashMap::new();
+    for i in &km.victim.items {
+        let key = (i.item_type_id, i.flag);
+        item_map
+            .entry(key)
+            .and_modify(|e| {
+                e.quantity_destroyed += i.quantity_destroyed.unwrap_or(0);
+                e.quantity_dropped += i.quantity_dropped.unwrap_or(0);
+            })
+            .or_insert(KillmailItem {
+                killmail_id: km.killmail_id,
+                kill_time,
+                type_id: i.item_type_id,
+                quantity_destroyed: i.quantity_destroyed.unwrap_or(0),
+                quantity_dropped: i.quantity_dropped.unwrap_or(0),
+                flag: i.flag,
+            });
+    }
+    let items: Vec<KillmailItem> = item_map.into_values().collect();
 
     if !items.is_empty() {
         // Delete old items first so flag=0 rows are replaced with proper flags
