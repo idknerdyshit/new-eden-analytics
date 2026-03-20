@@ -1375,6 +1375,27 @@ pub async fn get_uncached_character_ids(
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
+/// Return character IDs that were cached as "Unknown ..." placeholders more
+/// than 24 hours ago, so they can be retried in case the 404 was transient.
+pub async fn get_stale_unknown_character_ids(
+    pool: &PgPool,
+    limit: i32,
+) -> Result<Vec<i64>, DbError> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT character_id FROM characters
+        WHERE name LIKE 'Unknown %'
+          AND fetched_at < NOW() - INTERVAL '24 hours'
+        ORDER BY fetched_at ASC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
 /// Get character IDs with activity since the given timestamp.
 pub async fn get_active_character_ids_since(
     pool: &PgPool,

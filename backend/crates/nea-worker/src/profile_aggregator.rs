@@ -66,7 +66,8 @@ async fn run_cycle(
 }
 
 async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
-    let uncached = match nea_db::get_uncached_character_ids(pool, 200).await {
+    // Collect IDs that need resolution: never-seen + stale "Unknown" placeholders.
+    let mut ids_to_resolve = match nea_db::get_uncached_character_ids(pool, 500).await {
         Ok(ids) => ids,
         Err(e) => {
             tracing::warn!("profile_aggregator: failed to get uncached character IDs: {e}");
@@ -74,49 +75,92 @@ async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
         }
     };
 
-    if uncached.is_empty() {
+    match nea_db::get_stale_unknown_character_ids(pool, 500).await {
+        Ok(stale) => {
+            if !stale.is_empty() {
+                tracing::info!(count = stale.len(), "profile_aggregator: retrying stale Unknown characters");
+                ids_to_resolve.extend(stale);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("profile_aggregator: failed to get stale Unknown character IDs: {e}");
+        }
+    }
+
+    if ids_to_resolve.is_empty() {
         return;
     }
 
-    tracing::info!(count = uncached.len(), "profile_aggregator: resolving character names");
+    tracing::info!(count = ids_to_resolve.len(), "profile_aggregator: resolving character names");
 
+    // Phase 1: Bulk resolve via POST /universe/names/ (up to 1000 per call).
+    let mut remaining: std::collections::HashSet<i64> = ids_to_resolve.iter().copied().collect();
     let mut resolved = 0u64;
-    for character_id in uncached {
-        match esi.get_character(character_id).await {
-            Ok(info) => {
-                let character = nea_db::Character {
-                    character_id,
-                    name: info.name,
-                    corporation_id: info.corporation_id,
-                    alliance_id: info.alliance_id,
-                    fetched_at: Utc::now(),
-                };
-                if let Err(e) = nea_db::upsert_character(pool, &character).await {
-                    tracing::warn!(character_id, "profile_aggregator: failed to cache character: {e}");
-                } else {
-                    resolved += 1;
+
+    for chunk in ids_to_resolve.chunks(1000) {
+        match esi.resolve_names(chunk).await {
+            Ok(names) => {
+                for name in &names {
+                    if name.category == "character" {
+                        remaining.remove(&name.id);
+                        // We only get name from /universe/names/, not corp/alliance.
+                        // Do a targeted individual lookup for the full info.
+                    }
+                }
+                // For characters found in bulk, fetch full details individually.
+                for name in names {
+                    if name.category != "character" {
+                        continue;
+                    }
+                    match esi.get_character(name.id).await {
+                        Ok(info) => {
+                            let character = nea_db::Character {
+                                character_id: name.id,
+                                name: info.name,
+                                corporation_id: info.corporation_id,
+                                alliance_id: info.alliance_id,
+                                fetched_at: Utc::now(),
+                            };
+                            if let Err(e) = nea_db::upsert_character(pool, &character).await {
+                                tracing::warn!(character_id = name.id, "profile_aggregator: failed to cache character: {e}");
+                            } else {
+                                resolved += 1;
+                            }
+                        }
+                        Err(e) => {
+                            // Bulk said this ID exists but individual lookup failed —
+                            // transient error, skip and retry next cycle.
+                            tracing::debug!(character_id = name.id, "profile_aggregator: bulk-confirmed but individual lookup failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             }
-            Err(nea_esi::EsiError::Api { status: 404, .. }) => {
-                tracing::debug!(character_id, "profile_aggregator: character not found on ESI (404), caching placeholder");
-                let placeholder = nea_db::Character {
-                    character_id,
-                    name: format!("Unknown {}", character_id),
-                    corporation_id: None,
-                    alliance_id: None,
-                    fetched_at: Utc::now(),
-                };
-                let _ = nea_db::upsert_character(pool, &placeholder).await;
-            }
             Err(e) => {
-                tracing::debug!(character_id, "profile_aggregator: failed to fetch character from ESI: {e}");
+                tracing::warn!("profile_aggregator: bulk resolve_names failed: {e}");
+                // Fall through — remaining set still has all IDs from this chunk.
             }
         }
-        // Pace ESI requests
-        tokio::time::sleep(Duration::from_millis(70)).await;
     }
 
-    tracing::info!(resolved, "profile_aggregator: character name resolution complete");
+    // Phase 2: IDs not found in bulk are genuinely deleted/biomassed — cache placeholder.
+    // But only for IDs that haven't already been resolved above.
+    let not_found_count = remaining.len();
+    if not_found_count > 0 {
+        tracing::info!(count = not_found_count, "profile_aggregator: caching placeholders for IDs not found via bulk resolve");
+        for character_id in remaining {
+            let placeholder = nea_db::Character {
+                character_id,
+                name: format!("Unknown {}", character_id),
+                corporation_id: None,
+                alliance_id: None,
+                fetched_at: Utc::now(),
+            };
+            let _ = nea_db::upsert_character(pool, &placeholder).await;
+        }
+    }
+
+    tracing::info!(resolved, not_found = not_found_count, "profile_aggregator: character name resolution complete");
 }
 
 async fn compute_profile(
