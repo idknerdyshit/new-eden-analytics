@@ -236,37 +236,53 @@
 								<div class="grid grid-cols-1 gap-4 p-4 pt-0 lg:grid-cols-2 xl:grid-cols-3">
 									{#each group.ships as ship, si}
 										<div class="min-w-0">
-											<FittingCard
-												fitting={{
-													ship_type_id: ship.ship_type_id,
-													ship_name: ship.ship_name,
-													modules: ship.canonical_fit,
-													count: ship.occurrences,
-													variant_count: ship.variants?.length ?? 0
-												}}
-											/>
+											{#if ship.canonical_fit && ship.canonical_fit.length > 0}
+												<FittingCard
+													fitting={{
+														ship_type_id: ship.ship_type_id,
+														ship_name: ship.ship_name,
+														modules: ship.canonical_fit,
+														count: ship.occurrences,
+														variant_count: ship.variants?.length ?? 0
+													}}
+												/>
 
-											{#if ship.variants && ship.variants.length > 0}
-												<details class="mt-2">
-													<summary
-														class="cursor-pointer text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-													>
-														{ship.variants.length} variant fit{ship.variants.length !== 1 ? 's' : ''}
-													</summary>
-													<div class="mt-2 space-y-2 pl-2 border-l-2 border-[var(--color-border)]">
-														{#each ship.variants as variant}
-															<FittingCard
-																fitting={{
-																	ship_type_id: ship.ship_type_id,
-																	ship_name: ship.ship_name,
-																	modules: variant,
-																	count: 0,
-																	variant_count: 0
-																}}
-															/>
-														{/each}
+												{#if ship.variants && ship.variants.length > 0}
+													<details class="mt-2">
+														<summary
+															class="cursor-pointer text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+														>
+															{ship.variants.length} variant fit{ship.variants.length !== 1 ? 's' : ''}
+														</summary>
+														<div class="mt-2 space-y-2 pl-2 border-l-2 border-[var(--color-border)]">
+															{#each ship.variants as variant}
+																<FittingCard
+																	fitting={{
+																		ship_type_id: ship.ship_type_id,
+																		ship_name: ship.ship_name,
+																		modules: variant,
+																		count: 0,
+																		variant_count: 0
+																	}}
+																/>
+															{/each}
+														</div>
+													</details>
+												{/if}
+											{:else}
+												<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+													<div class="flex items-center gap-2 mb-2">
+														<img
+															src="https://images.evetech.net/types/{ship.ship_type_id}/icon?size=32"
+															alt={ship.ship_name}
+															class="h-6 w-6"
+														/>
+														<span class="font-medium text-[var(--color-text-primary)]">{ship.ship_name}</span>
 													</div>
-												</details>
+													<p class="text-xs text-[var(--color-text-secondary)] italic">
+														No fit data available — no losses with this ship in the current window
+													</p>
+												</div>
 											{/if}
 										</div>
 									{/each}
