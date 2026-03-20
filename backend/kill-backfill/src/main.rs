@@ -259,8 +259,12 @@ async fn process_killmail(
     let items: Vec<KillmailItem> = item_map.into_values().collect();
 
     if !items.is_empty() {
-        // Delete old items first so flag=0 rows are replaced with proper flags
-        nea_db::delete_killmail_items(pool, km.killmail_id, kill_time).await?;
+        // Try to delete old flag=0 rows, but skip on compressed chunks where
+        // DELETE triggers "tuple decompression limit exceeded". The upsert
+        // below handles exact duplicates via ON CONFLICT DO UPDATE.
+        if let Err(e) = nea_db::delete_killmail_items(pool, km.killmail_id, kill_time).await {
+            tracing::debug!(killmail_id = km.killmail_id, error = %e, "skipping delete on compressed chunk");
+        }
         nea_db::insert_killmail_items(pool, &items).await?;
     }
 
