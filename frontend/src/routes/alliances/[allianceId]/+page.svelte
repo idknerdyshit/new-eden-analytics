@@ -196,22 +196,19 @@
 			{#if doctrines.length > 0}
 				<section>
 					<h2 class="mb-4 text-lg font-semibold">Doctrines</h2>
-					<div class="space-y-6">
+					<div class="space-y-4">
 						{#each doctrines as group, gi}
-							<div
-								class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5"
-							>
-								<!-- Group header: ship icons + names -->
-								<div class="mb-4 flex items-center justify-between">
-									<div class="flex items-center gap-3">
+							<details class="group rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]" open>
+								<summary class="flex cursor-pointer items-center justify-between p-4 select-none">
+									<div class="flex flex-wrap items-center gap-2 overflow-hidden max-h-20">
 										{#each group.ships as ship, si}
 											<div class="flex items-center gap-1.5">
 												<img
 													src="https://images.evetech.net/types/{ship.ship_type_id}/icon?size=32"
 													alt={ship.ship_name}
-													class="h-6 w-6"
+													class="h-6 w-6 shrink-0"
 												/>
-												<span class="font-medium text-[var(--color-text-primary)]"
+												<span class="whitespace-nowrap font-medium text-[var(--color-text-primary)]"
 													>{ship.ship_name}</span
 												>
 											</div>
@@ -221,16 +218,16 @@
 										{/each}
 									</div>
 									<span
-										class="rounded-full bg-[color-mix(in_srgb,var(--color-accent-blue)_20%,transparent)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-blue)]"
+										class="ml-3 shrink-0 rounded-full bg-[color-mix(in_srgb,var(--color-accent-blue)_20%,transparent)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-blue)]"
 									>
-										Doctrine
+										{group.ships.length} ship{group.ships.length !== 1 ? 's' : ''}
 									</span>
-								</div>
+								</summary>
 
-								<!-- Per-ship fits -->
-								<div class="space-y-4">
+								<!-- Per-ship fits in a responsive grid -->
+								<div class="grid grid-cols-1 gap-4 p-4 pt-0 lg:grid-cols-2 xl:grid-cols-3">
 									{#each group.ships as ship, si}
-										<div>
+										<div class="min-w-0">
 											<FittingCard
 												fitting={{
 													ship_type_id: ship.ship_type_id,
@@ -241,7 +238,6 @@
 												}}
 											/>
 
-											<!-- Expandable variants -->
 											{#if ship.variants && ship.variants.length > 0}
 												<details class="mt-2">
 													<summary
@@ -267,7 +263,7 @@
 										</div>
 									{/each}
 								</div>
-							</div>
+							</details>
 						{/each}
 					</div>
 				</section>
