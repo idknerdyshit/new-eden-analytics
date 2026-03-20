@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use chrono::NaiveDate;
 use nea_db::MarketHistory;
-use nea_esi::{EsiClient, THE_FORGE};
+use nea_esi::{EsiClient, EsiError, THE_FORGE};
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
 use tokio::time;
@@ -171,7 +171,15 @@ async fn fetch_and_store(
     esi: &EsiClient,
     type_id: i32,
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-    let entries = esi.market_history(THE_FORGE, type_id).await?;
+    let entries = match esi.market_history(THE_FORGE, type_id).await {
+        Ok(e) => e,
+        Err(EsiError::Api { status: 400, ref message }) if message.contains("not tradable") => {
+            nea_db::mark_type_non_tradable(pool, type_id).await?;
+            tracing::info!(type_id, "marked type as non-tradable, will skip in future cycles");
+            return Ok(0);
+        }
+        Err(e) => return Err(e.into()),
+    };
     let rows = convert_history(type_id, THE_FORGE, &entries);
     let count = rows.len() as u64;
     nea_db::insert_market_history(pool, &rows).await?;

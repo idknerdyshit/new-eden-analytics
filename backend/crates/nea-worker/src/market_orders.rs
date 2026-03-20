@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use nea_db::MarketSnapshot;
-use nea_esi::{EsiClient, JITA_STATION, THE_FORGE};
+use nea_esi::{EsiClient, EsiError, JITA_STATION, THE_FORGE};
 use sqlx::PgPool;
 use tokio::time;
 
@@ -94,7 +94,15 @@ async fn fetch_and_snapshot(
     esi: &EsiClient,
     type_id: i32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let orders = esi.market_orders(THE_FORGE, type_id).await?;
+    let orders = match esi.market_orders(THE_FORGE, type_id).await {
+        Ok(o) => o,
+        Err(EsiError::Api { status: 400, ref message }) if message.contains("not tradable") => {
+            nea_db::mark_type_non_tradable(pool, type_id).await?;
+            tracing::info!(type_id, "marked type as non-tradable, will skip in future cycles");
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
     let (best_bid, best_ask, bid_volume, ask_volume) =
         EsiClient::compute_best_bid_ask(&orders, JITA_STATION);
 

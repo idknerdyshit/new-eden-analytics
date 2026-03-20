@@ -96,7 +96,8 @@ pub async fn get_product_materials(
     Ok(rows)
 }
 
-/// Get the list of tracked type IDs: materials used in manufacturing UNION product types.
+/// Get the list of tracked type IDs: materials used in manufacturing UNION product types,
+/// excluding any types previously marked as non-tradable.
 pub async fn get_tracked_type_ids(pool: &PgPool) -> Result<Vec<i32>, DbError> {
     let start = Instant::now();
     let rows: Vec<(i32,)> = sqlx::query_as(
@@ -106,6 +107,7 @@ pub async fn get_tracked_type_ids(pool: &PgPool) -> Result<Vec<i32>, DbError> {
             UNION
             SELECT DISTINCT product_type_id AS type_id FROM sde_blueprints
         ) combined
+        WHERE type_id NOT IN (SELECT type_id FROM non_tradable_types)
         ORDER BY type_id
         "#,
     )
@@ -114,6 +116,17 @@ pub async fn get_tracked_type_ids(pool: &PgPool) -> Result<Vec<i32>, DbError> {
     let ids: Vec<i32> = rows.into_iter().map(|r| r.0).collect();
     debug!(count = ids.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_tracked_type_ids");
     Ok(ids)
+}
+
+/// Mark a type as non-tradable so it is excluded from future market fetches.
+pub async fn mark_type_non_tradable(pool: &PgPool, type_id: i32) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO non_tradable_types (type_id) VALUES ($1) ON CONFLICT DO NOTHING",
+    )
+    .bind(type_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════
