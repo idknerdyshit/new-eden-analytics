@@ -395,9 +395,15 @@ async fn compute_doctrines(
     let mut kill_ships: HashMap<i64, HashSet<i32>> = HashMap::new();
     // ship_type_id → set of killmail_ids it appears on
     let mut ship_kills: HashMap<i32, HashSet<i64>> = HashMap::new();
+    // killmail_id → total entity attackers on that kill
+    let mut kill_attacker_count: HashMap<i64, u32> = HashMap::new();
+    // (killmail_id, ship_type_id) → count of entity pilots flying that ship on that kill
+    let mut kill_ship_count: HashMap<(i64, i32), u32> = HashMap::new();
     for (km_id, type_id) in &attack_rows {
         kill_ships.entry(*km_id).or_default().insert(*type_id);
         ship_kills.entry(*type_id).or_default().insert(*km_id);
+        *kill_attacker_count.entry(*km_id).or_insert(0) += 1;
+        *kill_ship_count.entry((*km_id, *type_id)).or_insert(0) += 1;
     }
 
     // Only consider ships with ≥5 appearances
@@ -450,6 +456,39 @@ async fn compute_doctrines(
         .filter(|g| g.len() >= 2)
         .collect();
 
+    // ── Step 2b: Filter ships by fleet share (≥5% of pilots) ─────────
+    // For each group, find the killmails where the group is active (any
+    // group member present), then compute each ship's average fleet share.
+    for group in &mut doctrine_groups {
+        // Collect all killmails where any group member attacks
+        let group_killmails: HashSet<i64> = group
+            .iter()
+            .filter_map(|tid| ship_kills.get(tid))
+            .flat_map(|kms| kms.iter().copied())
+            .collect();
+
+        group.retain(|tid| {
+            let kms = match ship_kills.get(tid) {
+                Some(k) => k,
+                None => return false,
+            };
+            // Average fleet share across killmails where this ship appears
+            let mut total_share = 0.0f64;
+            let mut count = 0u32;
+            for km_id in kms.iter().filter(|k| group_killmails.contains(k)) {
+                let pilots_in_ship = *kill_ship_count.get(&(*km_id, *tid)).unwrap_or(&0) as f64;
+                let total_pilots = *kill_attacker_count.get(km_id).unwrap_or(&1) as f64;
+                total_share += pilots_in_ship / total_pilots;
+                count += 1;
+            }
+            let avg_share = if count > 0 { total_share / count as f64 } else { 0.0 };
+            avg_share >= 0.05 // ≥5% of fleet
+        });
+    }
+
+    // Re-filter: only keep groups that still have ≥2 ship types after pruning
+    doctrine_groups.retain(|g| g.len() >= 2);
+
     // ── Step 3: Detect support ships via temporal-spatial correlation ─
     let support_ships = detect_support_ships(pool, column, entity_id, window_days).await;
 
@@ -482,7 +521,15 @@ async fn compute_doctrines(
         }
 
         if let Some(gi) = best_group_idx {
-            if best_overlap >= 3 {
+            // The support ship must appear near ≥5% of the group's total kills
+            let group_total_kills: usize = doctrine_groups[gi]
+                .iter()
+                .filter_map(|tid| ship_kills.get(tid))
+                .flat_map(|kms| kms.iter())
+                .collect::<HashSet<_>>()
+                .len();
+            let threshold = (group_total_kills as f64 * 0.05).max(3.0) as usize;
+            if best_overlap >= threshold {
                 doctrine_groups[gi].push(*support_type_id);
             }
         }
