@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -351,6 +351,18 @@ async fn compute_ship_usage(
     Ok(result)
 }
 
+/// Per-ship doctrine data before grouping.
+struct ShipDoctrine {
+    ship_type_id: i32,
+    ship_name: String,
+    canonical_fit: Vec<serde_json::Value>,
+    variants: Vec<Vec<serde_json::Value>>,
+    occurrences: usize,
+    pilot_count: usize,
+    /// Killmail IDs where this ship was lost with this doctrine fit.
+    killmail_ids: Vec<i64>,
+}
+
 async fn compute_doctrines(
     pool: &PgPool,
     column: &str,
@@ -374,10 +386,9 @@ async fn compute_doctrines(
         .fetch_all(pool)
         .await?;
 
-    let mut all_doctrines = Vec::new();
+    let mut ship_doctrines: Vec<ShipDoctrine> = Vec::new();
 
     for (ship_type_id, _) in &top_ships {
-        // Get loss killmails where a member was the victim flying this ship
         let query = format!(
             r#"
             SELECT killmail_id, kill_time
@@ -389,18 +400,18 @@ async fn compute_doctrines(
             "#,
             column
         );
-        let loss_killmail_ids: Vec<(i64, chrono::DateTime<Utc>)> = sqlx::query_as(&query)
+        let loss_killmails: Vec<(i64, chrono::DateTime<Utc>)> = sqlx::query_as(&query)
             .bind(entity_id)
             .bind(ship_type_id)
             .bind(window_days)
             .fetch_all(pool)
             .await?;
 
-        // Reconstruct fittings from killmail_items
         let mut fittings: Vec<Vec<(i32, i32)>> = Vec::new();
+        let mut fitting_km_ids: Vec<i64> = Vec::new();
         let mut pilot_ids: HashSet<Option<i64>> = HashSet::new();
 
-        for (km_id, km_time) in &loss_killmail_ids {
+        for (km_id, km_time) in &loss_killmails {
             let items: Vec<(i32, i32)> = sqlx::query_as(
                 r#"
                 SELECT type_id, flag
@@ -421,9 +432,9 @@ async fn compute_doctrines(
 
             if !fitted.is_empty() {
                 fittings.push(fitted);
+                fitting_km_ids.push(*km_id);
             }
 
-            // Track unique pilots
             let victim: Option<(Option<i64>,)> = sqlx::query_as(
                 "SELECT character_id FROM killmail_victims WHERE killmail_id = $1 AND kill_time = $2",
             )
@@ -440,18 +451,15 @@ async fn compute_doctrines(
             continue;
         }
 
-        // Cluster via Jaccard >= 0.7 (lower threshold for corp doctrines)
         let clusters = cluster_fittings(&fittings, 0.7);
-
         let ship_name = get_type_name(pool, *ship_type_id).await;
 
         for cluster in clusters {
-            // Filter: pilot_count >= 3 to qualify as doctrine
-            let cluster_pilot_count = pilot_ids.len(); // approximate
             if cluster.count < 3 {
                 continue;
             }
 
+            // Resolve canonical fit modules
             let canonical = &fittings[cluster.canonical_idx];
             let mut modules = Vec::new();
             for (type_id, flag) in canonical {
@@ -463,18 +471,124 @@ async fn compute_doctrines(
                 }));
             }
 
-            all_doctrines.push(serde_json::json!({
-                "ship_type_id": ship_type_id,
-                "ship_name": ship_name,
-                "canonical_fit": modules,
-                "occurrences": cluster.count,
-                "pilot_count": cluster_pilot_count,
-                "variant_count": cluster.variant_count,
-            }));
+            // Collect unique variant fits (excluding the canonical)
+            let canonical_sorted: Vec<i32> = {
+                let mut s: Vec<i32> = canonical.iter().map(|(tid, _)| *tid).collect();
+                s.sort();
+                s
+            };
+            let mut seen_variants: HashSet<Vec<i32>> = HashSet::new();
+            seen_variants.insert(canonical_sorted);
+            let mut variants: Vec<Vec<serde_json::Value>> = Vec::new();
+
+            for &idx in &cluster.member_indices {
+                let fit = &fittings[idx];
+                let mut sorted_key: Vec<i32> = fit.iter().map(|(tid, _)| *tid).collect();
+                sorted_key.sort();
+                if seen_variants.insert(sorted_key) {
+                    let mut variant_modules = Vec::new();
+                    for (type_id, flag) in fit {
+                        let name = get_type_name(pool, *type_id).await;
+                        variant_modules.push(serde_json::json!({
+                            "type_id": type_id,
+                            "name": name,
+                            "flag": flag,
+                        }));
+                    }
+                    variants.push(variant_modules);
+                }
+            }
+
+            // Collect killmail IDs associated with this cluster
+            let km_ids: Vec<i64> = cluster
+                .member_indices
+                .iter()
+                .filter_map(|&idx| fitting_km_ids.get(idx).copied())
+                .collect();
+
+            ship_doctrines.push(ShipDoctrine {
+                ship_type_id: *ship_type_id,
+                ship_name: ship_name.clone(),
+                canonical_fit: modules,
+                variants,
+                occurrences: cluster.count,
+                pilot_count: pilot_ids.len(),
+                killmail_ids: km_ids,
+            });
         }
     }
 
-    Ok(all_doctrines)
+    // Group ship doctrines that share killmails (same fleet/doctrine)
+    let groups = group_doctrines_by_cooccurrence(&ship_doctrines);
+
+    let mut result = Vec::new();
+    for group in groups {
+        let ships: Vec<serde_json::Value> = group
+            .iter()
+            .map(|&idx| {
+                let d = &ship_doctrines[idx];
+                serde_json::json!({
+                    "ship_type_id": d.ship_type_id,
+                    "ship_name": d.ship_name,
+                    "canonical_fit": d.canonical_fit,
+                    "variants": d.variants,
+                    "occurrences": d.occurrences,
+                    "pilot_count": d.pilot_count,
+                })
+            })
+            .collect();
+        result.push(serde_json::json!({ "ships": ships }));
+    }
+
+    Ok(result)
+}
+
+/// Group doctrine entries by killmail co-occurrence.
+/// Two ship doctrines are in the same group if they share >= 20% of the smaller
+/// set's killmail IDs (i.e. they die on the same engagements).
+fn group_doctrines_by_cooccurrence(doctrines: &[ShipDoctrine]) -> Vec<Vec<usize>> {
+    let n = doctrines.len();
+    // Union-find
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    fn find(parent: &mut [usize], x: usize) -> usize {
+        if parent[x] != x {
+            parent[x] = find(parent, parent[x]);
+        }
+        parent[x]
+    }
+
+    fn union(parent: &mut [usize], a: usize, b: usize) {
+        let ra = find(parent, a);
+        let rb = find(parent, b);
+        if ra != rb {
+            parent[rb] = ra;
+        }
+    }
+
+    let km_sets: Vec<HashSet<i64>> = doctrines
+        .iter()
+        .map(|d| d.killmail_ids.iter().copied().collect())
+        .collect();
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let shared = km_sets[i].intersection(&km_sets[j]).count();
+            let min_size = km_sets[i].len().min(km_sets[j].len());
+            if min_size > 0 && shared as f64 / min_size as f64 >= 0.2 {
+                union(&mut parent, i, j);
+            }
+        }
+    }
+
+    // Collect groups
+    let mut groups_map: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        let root = find(&mut parent, i);
+        groups_map.entry(root).or_default().push(i);
+    }
+
+    groups_map.into_values().collect()
 }
 
 async fn compute_trends(
@@ -571,56 +685,79 @@ async fn compute_fleet_comps(
     entity_id: i64,
     window_days: i32,
 ) -> Option<Vec<serde_json::Value>> {
+    // Get the distinct ship types per killmail for this entity's attackers
     let query = format!(
         r#"
-        SELECT a1.ship_type_id, a2.ship_type_id, COUNT(DISTINCT a1.killmail_id) as cnt
-        FROM killmail_attackers a1
-        JOIN killmail_attackers a2
-          ON a1.killmail_id = a2.killmail_id AND a1.kill_time = a2.kill_time
-        WHERE a1.{} = $1
-          AND a1.kill_time >= NOW() - $2 * INTERVAL '1 day'
-          AND a1.ship_type_id > 0 AND a2.ship_type_id > 0
-          AND a1.ship_type_id < a2.ship_type_id
-        GROUP BY a1.ship_type_id, a2.ship_type_id
-        HAVING COUNT(DISTINCT a1.killmail_id) >= 5
-        ORDER BY cnt DESC LIMIT 20
+        SELECT killmail_id, ship_type_id
+        FROM killmail_attackers
+        WHERE {} = $1
+          AND kill_time >= NOW() - $2 * INTERVAL '1 day'
+          AND ship_type_id > 0
+        ORDER BY killmail_id
         "#,
         column
     );
 
-    // Use a timeout of 10 seconds for this potentially expensive query
     let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        sqlx::query_as::<_, (i32, i32, i64)>(&query)
+        Duration::from_secs(15),
+        sqlx::query_as::<_, (i64, i32)>(&query)
             .bind(entity_id)
             .bind(window_days)
             .fetch_all(pool),
     )
     .await;
 
-    match result {
-        Ok(Ok(rows)) => {
-            let mut comps = Vec::new();
-            for (ship1, ship2, count) in rows {
-                let name1 = get_type_name(pool, ship1).await;
-                let name2 = get_type_name(pool, ship2).await;
-                comps.push(serde_json::json!({
-                    "ships": [
-                        {"type_id": ship1, "name": name1},
-                        {"type_id": ship2, "name": name2}
-                    ],
-                    "occurrence_count": count,
-                }));
-            }
-            Some(comps)
-        }
+    let rows = match result {
+        Ok(Ok(rows)) => rows,
         Ok(Err(e)) => {
             tracing::warn!(entity_id, "doctrine_aggregator: fleet comp query failed: {e}");
-            None
+            return None;
         }
         Err(_) => {
-            tracing::warn!(entity_id, "doctrine_aggregator: fleet comp query timed out (>10s), skipping");
-            None
+            tracing::warn!(entity_id, "doctrine_aggregator: fleet comp query timed out (>15s), skipping");
+            return None;
         }
+    };
+
+    // Group ship types by killmail, keeping only distinct types per kill
+    let mut kills_ships: HashMap<i64, Vec<i32>> = HashMap::new();
+    for (killmail_id, ship_type_id) in &rows {
+        kills_ships
+            .entry(*killmail_id)
+            .or_default()
+            .push(*ship_type_id);
     }
+
+    // Count occurrences of each sorted ship-type set (only kills with 2+ distinct types)
+    let mut comp_counts: HashMap<Vec<i32>, u64> = HashMap::new();
+    for ships in kills_ships.values() {
+        let mut unique: Vec<i32> = ships.iter().copied().collect::<HashSet<_>>().into_iter().collect();
+        if unique.len() < 2 {
+            continue;
+        }
+        unique.sort_unstable();
+        *comp_counts.entry(unique).or_insert(0) += 1;
+    }
+
+    // Filter to >=5 occurrences, take top 20
+    let mut ranked: Vec<(Vec<i32>, u64)> = comp_counts
+        .into_iter()
+        .filter(|(_, count)| *count >= 5)
+        .collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1));
+    ranked.truncate(20);
+
+    let mut comps = Vec::new();
+    for (ship_ids, count) in ranked {
+        let mut ships = Vec::new();
+        for type_id in &ship_ids {
+            let name = get_type_name(pool, *type_id).await;
+            ships.push(serde_json::json!({"type_id": type_id, "name": name}));
+        }
+        comps.push(serde_json::json!({
+            "ships": ships,
+            "occurrence_count": count,
+        }));
+    }
+    Some(comps)
 }

@@ -249,6 +249,20 @@ export interface AllianceInfo {
 	fetched_at: string;
 }
 
+export interface DoctrineShipEntry {
+	ship_type_id: number;
+	ship_name: string;
+	canonical_fit: FittingModule[];
+	variants: FittingModule[][];
+	occurrences: number;
+	pilot_count: number;
+}
+
+export interface DoctrineGroup {
+	ships: DoctrineShipEntry[];
+}
+
+/** @deprecated Use DoctrineGroup instead */
 export interface DoctrineEntry {
 	ship_type_id: number;
 	ship_name: string;
@@ -288,7 +302,7 @@ export interface DoctrineProfileData {
 	total_kills: number;
 	total_losses: number;
 	ship_usage: ShipUsageEntry[] | null;
-	doctrines: DoctrineEntry[] | null;
+	doctrines: DoctrineGroup[] | null;
 	ship_trends: ShipTrend[] | null;
 	fleet_comps: FleetComp[] | null;
 	computed_at: string;

@@ -26,6 +26,7 @@ pub struct FittingCluster {
     pub canonical_idx: usize,
     pub count: usize,
     pub variant_count: usize,
+    pub member_indices: Vec<usize>,
 }
 
 pub fn cluster_fittings(fittings: &[Vec<(i32, i32)>], threshold: f64) -> Vec<FittingCluster> {
@@ -94,6 +95,7 @@ pub fn cluster_fittings(fittings: &[Vec<(i32, i32)>], threshold: f64) -> Vec<Fit
             canonical_idx: best_idx,
             count: members.len(),
             variant_count: unique_fits.len(),
+            member_indices: members,
         });
     }
 

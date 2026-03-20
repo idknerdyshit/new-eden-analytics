@@ -6,7 +6,7 @@
 		CorporationDetail,
 		DoctrineProfileData,
 		ShipUsageEntry,
-		DoctrineEntry,
+		DoctrineGroup,
 		ShipTrend,
 		FleetComp
 	} from '$lib/api/client';
@@ -47,7 +47,7 @@
 		detail?.profiles.find((p) => p.window_days === selectedWindow) ?? null
 	);
 	let shipUsage = $derived<ShipUsageEntry[]>(activeProfile?.ship_usage ?? []);
-	let doctrines = $derived<DoctrineEntry[]>(activeProfile?.doctrines ?? []);
+	let doctrines = $derived<DoctrineGroup[]>(activeProfile?.doctrines ?? []);
 	let shipTrends = $derived<ShipTrend[]>(activeProfile?.ship_trends ?? []);
 	let fleetComps = $derived<FleetComp[]>(activeProfile?.fleet_comps ?? []);
 	let maxUsageCount = $derived(shipUsage.length > 0 ? shipUsage[0].count : 1);
@@ -204,46 +204,77 @@
 			{#if doctrines.length > 0}
 				<section>
 					<h2 class="mb-4 text-lg font-semibold">Doctrines</h2>
-					<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-						{#each doctrines as doctrine}
+					<div class="space-y-6">
+						{#each doctrines as group, gi}
 							<div
-								class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4"
+								class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5"
 							>
-								<div class="mb-3 flex items-center justify-between">
-									<div class="flex items-center gap-2">
-										<img
-											src="https://images.evetech.net/types/{doctrine.ship_type_id}/icon?size=32"
-											alt={doctrine.ship_name}
-											class="h-6 w-6"
-										/>
-										<span class="font-medium text-[var(--color-text-primary)]"
-											>{doctrine.ship_name}</span
-										>
+								<!-- Group header: ship icons + names -->
+								<div class="mb-4 flex items-center justify-between">
+									<div class="flex items-center gap-3">
+										{#each group.ships as ship, si}
+											<div class="flex items-center gap-1.5">
+												<img
+													src="https://images.evetech.net/types/{ship.ship_type_id}/icon?size=32"
+													alt={ship.ship_name}
+													class="h-6 w-6"
+												/>
+												<span class="font-medium text-[var(--color-text-primary)]"
+													>{ship.ship_name}</span
+												>
+											</div>
+											{#if si < group.ships.length - 1}
+												<span class="text-[var(--color-text-secondary)]">+</span>
+											{/if}
+										{/each}
 									</div>
-									<div class="flex items-center gap-2">
-										<span
-											class="rounded-full bg-[color-mix(in_srgb,var(--color-accent-blue)_20%,transparent)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-blue)]"
-										>
-											Doctrine
-										</span>
-										<span
-											class="text-xs text-[var(--color-text-secondary)]"
-										>
-											{doctrine.occurrences} losses
-										</span>
-									</div>
+									<span
+										class="rounded-full bg-[color-mix(in_srgb,var(--color-accent-blue)_20%,transparent)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-blue)]"
+									>
+										Doctrine
+									</span>
 								</div>
-								{#if doctrine.canonical_fit && doctrine.canonical_fit.length > 0}
-									<FittingCard
-										fitting={{
-											ship_type_id: doctrine.ship_type_id,
-											ship_name: doctrine.ship_name,
-											modules: doctrine.canonical_fit,
-											count: doctrine.occurrences,
-											variant_count: doctrine.variant_count
-										}}
-									/>
-								{/if}
+
+								<!-- Per-ship fits -->
+								<div class="space-y-4">
+									{#each group.ships as ship, si}
+										<div>
+											<FittingCard
+												fitting={{
+													ship_type_id: ship.ship_type_id,
+													ship_name: ship.ship_name,
+													modules: ship.canonical_fit,
+													count: ship.occurrences,
+													variant_count: ship.variants?.length ?? 0
+												}}
+											/>
+
+											<!-- Expandable variants -->
+											{#if ship.variants && ship.variants.length > 0}
+													<details class="mt-2">
+													<summary
+														class="cursor-pointer text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+													>
+														{ship.variants.length} variant fit{ship.variants.length !== 1 ? 's' : ''}
+													</summary>
+													<div class="mt-2 space-y-2 pl-2 border-l-2 border-[var(--color-border)]">
+														{#each ship.variants as variant}
+															<FittingCard
+																fitting={{
+																	ship_type_id: ship.ship_type_id,
+																	ship_name: ship.ship_name,
+																	modules: variant,
+																	count: 0,
+																	variant_count: 0
+																}}
+															/>
+														{/each}
+													</div>
+												</details>
+											{/if}
+										</div>
+									{/each}
+								</div>
 							</div>
 						{/each}
 					</div>

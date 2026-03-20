@@ -48,14 +48,16 @@
 			/>
 			<span class="font-medium text-[var(--color-text-primary)]">{fitting.ship_name}</span>
 		</div>
-		<div class="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-			<span>{fitting.count} loss{fitting.count !== 1 ? 'es' : ''}</span>
-			{#if fitting.variant_count > 1}
-				<span class="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5">
-					{fitting.variant_count} variants
-				</span>
-			{/if}
-		</div>
+		{#if fitting.count > 0}
+			<div class="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+				<span>{fitting.count} loss{fitting.count !== 1 ? 'es' : ''}</span>
+				{#if fitting.variant_count > 1}
+					<span class="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5">
+						{fitting.variant_count} variants
+					</span>
+				{/if}
+			</div>
+		{/if}
 	</div>
 
 	<div class="space-y-2">
