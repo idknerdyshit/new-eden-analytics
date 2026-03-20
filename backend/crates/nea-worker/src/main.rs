@@ -57,6 +57,28 @@ async fn main() {
                 }
                 return;
             }
+            Some("doctrine_aggregator") => {
+                tracing::info!("nea-worker: running doctrine_aggregator once");
+
+                let database_url =
+                    std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+                let pool = nea_db::create_pool(&database_url)
+                    .await
+                    .expect("failed to create database pool");
+                nea_db::run_migrations(&pool)
+                    .await
+                    .expect("failed to run database migrations");
+
+                let esi = Arc::new(EsiClient::with_user_agent(
+                    "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)",
+                ));
+
+                if let Err(e) = doctrine_aggregator::run_cycle(&pool, &esi).await {
+                    tracing::error!("doctrine_aggregator: failed: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
             Some(other) => {
                 tracing::error!("unknown task for --run-once: {other}");
                 std::process::exit(1);
