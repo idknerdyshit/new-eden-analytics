@@ -28,7 +28,7 @@ async fn aggregate_destruction(
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
     let rows = sqlx::query_as::<_, DailyDestruction>(
         r#"
-        SELECT type_id, kill_time::date as date,
+        SELECT combined.type_id, st.name AS type_name, kill_time::date as date,
                SUM(quantity_destroyed)::bigint as quantity_destroyed,
                COUNT(DISTINCT killmail_id)::int as kill_count
         FROM (
@@ -44,7 +44,8 @@ async fn aggregate_destruction(
             WHERE kv.kill_time >= NOW() - INTERVAL '7 days'
               AND st.group_id != 29
         ) combined
-        GROUP BY type_id, kill_time::date
+        JOIN sde_types st ON st.type_id = combined.type_id
+        GROUP BY combined.type_id, st.name, kill_time::date
         "#,
     )
     .fetch_all(pool)
