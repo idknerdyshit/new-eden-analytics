@@ -29,9 +29,21 @@ pub type Result<T> = std::result::Result<T, ZkillError>;
 // Response types
 // ---------------------------------------------------------------------------
 
-/// R2Z2 ephemeral killmail — ESI-format killmail with zkb metadata block.
+/// R2Z2 ephemeral killmail — ESI killmail nested under `esi` key, plus zkb metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct R2z2Response {
+    pub killmail_id: i64,
+    pub esi: R2z2Esi,
+    pub zkb: ZkillZkb,
+    #[serde(default)]
+    pub sequence_id: Option<i64>,
+    #[serde(default)]
+    pub uploaded_at: Option<i64>,
+}
+
+/// The ESI killmail envelope inside an R2Z2 response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct R2z2Esi {
     pub killmail_id: i64,
     #[serde(default)]
     pub killmail_time: Option<String>,
@@ -40,11 +52,6 @@ pub struct R2z2Response {
     pub victim: ZkillVictim,
     #[serde(default)]
     pub attackers: Vec<ZkillAttacker>,
-    pub zkb: ZkillZkb,
-    #[serde(default)]
-    pub sequence_id: Option<i64>,
-    #[serde(default)]
-    pub uploaded_at: Option<i64>,
 }
 
 /// Response from the R2Z2 `/ephemeral/sequence.json` endpoint.
@@ -278,30 +285,33 @@ mod tests {
     fn deserialize_response() {
         let json = r#"{
             "killmail_id": 123456,
-            "killmail_time": "2026-03-17T12:00:00Z",
-            "solar_system_id": 30000142,
-            "victim": {
-                "ship_type_id": 587,
-                "character_id": 91234567,
-                "corporation_id": 98000001,
-                "items": [
+            "esi": {
+                "killmail_id": 123456,
+                "killmail_time": "2026-03-17T12:00:00Z",
+                "solar_system_id": 30000142,
+                "victim": {
+                    "ship_type_id": 587,
+                    "character_id": 91234567,
+                    "corporation_id": 98000001,
+                    "items": [
+                        {
+                            "item_type_id": 2032,
+                            "quantity_destroyed": 1,
+                            "quantity_dropped": null,
+                            "flag": 27
+                        }
+                    ]
+                },
+                "attackers": [
                     {
-                        "item_type_id": 2032,
-                        "quantity_destroyed": 1,
-                        "quantity_dropped": null,
-                        "flag": 27
+                        "character_id": 95000001,
+                        "ship_type_id": 24690,
+                        "weapon_type_id": 3170,
+                        "damage_done": 5000,
+                        "final_blow": true
                     }
                 ]
             },
-            "attackers": [
-                {
-                    "character_id": 95000001,
-                    "ship_type_id": 24690,
-                    "weapon_type_id": 3170,
-                    "damage_done": 5000,
-                    "final_blow": true
-                }
-            ],
             "zkb": {
                 "hash": "abcdef1234567890",
                 "totalValue": 1500000.50
@@ -314,19 +324,19 @@ mod tests {
         assert_eq!(resp.killmail_id, 123456);
         assert_eq!(resp.zkb.hash, "abcdef1234567890");
         assert_eq!(resp.zkb.total_value, 1500000.50);
-        assert_eq!(resp.victim.ship_type_id, 587);
-        assert_eq!(resp.victim.character_id, Some(91234567));
-        assert_eq!(resp.victim.corporation_id, Some(98000001));
-        assert_eq!(resp.victim.alliance_id, None);
-        assert_eq!(resp.victim.items.len(), 1);
-        assert_eq!(resp.victim.items[0].item_type_id, 2032);
-        assert_eq!(resp.victim.items[0].quantity_destroyed, Some(1));
-        assert_eq!(resp.victim.items[0].flag, 27);
-        assert_eq!(resp.attackers.len(), 1);
-        assert_eq!(resp.attackers[0].character_id, Some(95000001));
-        assert_eq!(resp.attackers[0].ship_type_id, 24690);
-        assert_eq!(resp.attackers[0].damage_done, 5000);
-        assert!(resp.attackers[0].final_blow);
+        assert_eq!(resp.esi.victim.ship_type_id, 587);
+        assert_eq!(resp.esi.victim.character_id, Some(91234567));
+        assert_eq!(resp.esi.victim.corporation_id, Some(98000001));
+        assert_eq!(resp.esi.victim.alliance_id, None);
+        assert_eq!(resp.esi.victim.items.len(), 1);
+        assert_eq!(resp.esi.victim.items[0].item_type_id, 2032);
+        assert_eq!(resp.esi.victim.items[0].quantity_destroyed, Some(1));
+        assert_eq!(resp.esi.victim.items[0].flag, 27);
+        assert_eq!(resp.esi.attackers.len(), 1);
+        assert_eq!(resp.esi.attackers[0].character_id, Some(95000001));
+        assert_eq!(resp.esi.attackers[0].ship_type_id, 24690);
+        assert_eq!(resp.esi.attackers[0].damage_done, 5000);
+        assert!(resp.esi.attackers[0].final_blow);
         assert_eq!(resp.sequence_id, Some(42));
     }
 
@@ -334,10 +344,13 @@ mod tests {
     fn deserialize_response_missing_optional_fields() {
         let json = r#"{
             "killmail_id": 999,
-            "killmail_time": "2026-03-17T00:00:00Z",
-            "victim": {
-                "ship_type_id": 0,
-                "items": []
+            "esi": {
+                "killmail_id": 999,
+                "killmail_time": "2026-03-17T00:00:00Z",
+                "victim": {
+                    "ship_type_id": 0,
+                    "items": []
+                }
             },
             "zkb": {
                 "hash": "deadbeef",
@@ -347,8 +360,8 @@ mod tests {
 
         let resp: R2z2Response = serde_json::from_str(json).unwrap();
         assert_eq!(resp.killmail_id, 999);
-        assert_eq!(resp.victim.ship_type_id, 0);
-        assert!(resp.victim.items.is_empty());
+        assert_eq!(resp.esi.victim.ship_type_id, 0);
+        assert!(resp.esi.victim.items.is_empty());
         assert_eq!(resp.sequence_id, None);
         assert_eq!(resp.uploaded_at, None);
     }

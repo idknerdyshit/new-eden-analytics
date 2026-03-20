@@ -36,8 +36,10 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
     loop {
         match r2z2.fetch_sequence(sequence_id).await {
             Ok(Some(response)) => {
+                let esi = &response.esi;
+
                 // Parse killmail_time — skip if missing
-                let kill_time = match &response.killmail_time {
+                let kill_time = match &esi.killmail_time {
                     Some(t) => nea_zkill::parse_killmail_time(t),
                     None => {
                         tracing::warn!(
@@ -54,7 +56,7 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 let km = Killmail {
                     killmail_id: response.killmail_id,
                     kill_time,
-                    solar_system_id: Some(response.solar_system_id),
+                    solar_system_id: Some(esi.solar_system_id),
                     total_value: Some(response.zkb.total_value),
                     r2z2_sequence_id: Some(sequence_id),
                 };
@@ -67,7 +69,7 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 }
 
                 // Insert items
-                let items: Vec<KillmailItem> = response
+                let items: Vec<KillmailItem> = esi
                     .victim
                     .items
                     .iter()
@@ -92,10 +94,10 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 let victim = KillmailVictim {
                     killmail_id: response.killmail_id,
                     kill_time,
-                    ship_type_id: response.victim.ship_type_id,
-                    character_id: response.victim.character_id,
-                    corporation_id: response.victim.corporation_id,
-                    alliance_id: response.victim.alliance_id,
+                    ship_type_id: esi.victim.ship_type_id,
+                    character_id: esi.victim.character_id,
+                    corporation_id: esi.victim.corporation_id,
+                    alliance_id: esi.victim.alliance_id,
                 };
 
                 if let Err(e) = nea_db::insert_killmail_victim(&pool, &victim).await {
@@ -106,7 +108,7 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 }
 
                 // Insert attackers
-                let attackers: Vec<KillmailAttacker> = response
+                let attackers: Vec<KillmailAttacker> = esi
                     .attackers
                     .iter()
                     .map(|a| KillmailAttacker {
