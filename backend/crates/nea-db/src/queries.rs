@@ -237,21 +237,6 @@ pub async fn insert_market_snapshot(
 // Kill queries
 // ═══════════════════════════════════════════════════════════════════
 
-/// Delete all items for a killmail (used by backfill to replace flag=0 rows with proper flags).
-pub async fn delete_killmail_items(
-    pool: &PgPool,
-    killmail_id: i64,
-    kill_time: DateTime<Utc>,
-) -> Result<(), DbError> {
-    sqlx::query(
-        "DELETE FROM killmail_items WHERE killmail_id = $1 AND kill_time = $2",
-    )
-    .bind(killmail_id)
-    .bind(kill_time)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
 
 pub async fn insert_killmail(pool: &PgPool, km: &Killmail) -> Result<(), DbError> {
     sqlx::query(
