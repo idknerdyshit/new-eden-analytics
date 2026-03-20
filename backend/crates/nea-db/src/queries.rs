@@ -934,6 +934,427 @@ pub async fn get_character_losses(
     Ok(rows)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Killmail summary / detail queries
+// ═══════════════════════════════════════════════════════════════════
+
+pub async fn get_character_kills_summary(
+    pool: &PgPool,
+    character_id: i64,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<KillmailSummary>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, KillmailSummary>(
+        r#"
+        SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
+               v.ship_type_id AS victim_ship_type_id,
+               st.name AS victim_ship_name,
+               v.character_id AS victim_character_id,
+               c.name AS victim_character_name,
+               v.corporation_id AS victim_corporation_id,
+               v.alliance_id AS victim_alliance_id,
+               (SELECT COUNT(*) FROM killmail_attackers a2
+                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+        FROM killmail_attackers a
+        JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
+        LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
+        LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
+        LEFT JOIN characters c ON c.character_id = v.character_id
+        WHERE a.character_id = $1
+        GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
+                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id
+        ORDER BY k.kill_time DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(character_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(character_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_character_kills_summary");
+    Ok(rows)
+}
+
+pub async fn count_character_kills(pool: &PgPool, character_id: i64) -> Result<i64, DbError> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(DISTINCT (a.killmail_id, a.kill_time))
+        FROM killmail_attackers a
+        WHERE a.character_id = $1
+        "#,
+    )
+    .bind(character_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn get_character_losses_summary(
+    pool: &PgPool,
+    character_id: i64,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<KillmailSummary>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, KillmailSummary>(
+        r#"
+        SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
+               v.ship_type_id AS victim_ship_type_id,
+               st.name AS victim_ship_name,
+               v.character_id AS victim_character_id,
+               c.name AS victim_character_name,
+               v.corporation_id AS victim_corporation_id,
+               v.alliance_id AS victim_alliance_id,
+               (SELECT COUNT(*) FROM killmail_attackers a2
+                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+        FROM killmail_victims v
+        JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
+        LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
+        LEFT JOIN characters c ON c.character_id = v.character_id
+        WHERE v.character_id = $1
+        ORDER BY k.kill_time DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(character_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(character_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_character_losses_summary");
+    Ok(rows)
+}
+
+pub async fn count_character_losses(pool: &PgPool, character_id: i64) -> Result<i64, DbError> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM killmail_victims v
+        WHERE v.character_id = $1
+        "#,
+    )
+    .bind(character_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn get_corporation_kills_summary(
+    pool: &PgPool,
+    corporation_id: i64,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<KillmailSummary>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, KillmailSummary>(
+        r#"
+        SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
+               v.ship_type_id AS victim_ship_type_id,
+               st.name AS victim_ship_name,
+               v.character_id AS victim_character_id,
+               c.name AS victim_character_name,
+               v.corporation_id AS victim_corporation_id,
+               v.alliance_id AS victim_alliance_id,
+               (SELECT COUNT(*) FROM killmail_attackers a2
+                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+        FROM killmail_attackers a
+        JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
+        LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
+        LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
+        LEFT JOIN characters c ON c.character_id = v.character_id
+        WHERE a.corporation_id = $1
+        GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
+                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id
+        ORDER BY k.kill_time DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(corporation_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(corporation_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_corporation_kills_summary");
+    Ok(rows)
+}
+
+pub async fn count_corporation_kills(pool: &PgPool, corporation_id: i64) -> Result<i64, DbError> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(DISTINCT (a.killmail_id, a.kill_time))
+        FROM killmail_attackers a
+        WHERE a.corporation_id = $1
+        "#,
+    )
+    .bind(corporation_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn get_corporation_losses_summary(
+    pool: &PgPool,
+    corporation_id: i64,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<KillmailSummary>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, KillmailSummary>(
+        r#"
+        SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
+               v.ship_type_id AS victim_ship_type_id,
+               st.name AS victim_ship_name,
+               v.character_id AS victim_character_id,
+               c.name AS victim_character_name,
+               v.corporation_id AS victim_corporation_id,
+               v.alliance_id AS victim_alliance_id,
+               (SELECT COUNT(*) FROM killmail_attackers a2
+                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+        FROM killmail_victims v
+        JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
+        LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
+        LEFT JOIN characters c ON c.character_id = v.character_id
+        WHERE v.corporation_id = $1
+        ORDER BY k.kill_time DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(corporation_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(corporation_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_corporation_losses_summary");
+    Ok(rows)
+}
+
+pub async fn count_corporation_losses(pool: &PgPool, corporation_id: i64) -> Result<i64, DbError> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM killmail_victims v
+        WHERE v.corporation_id = $1
+        "#,
+    )
+    .bind(corporation_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn get_alliance_kills_summary(
+    pool: &PgPool,
+    alliance_id: i64,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<KillmailSummary>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, KillmailSummary>(
+        r#"
+        SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
+               v.ship_type_id AS victim_ship_type_id,
+               st.name AS victim_ship_name,
+               v.character_id AS victim_character_id,
+               c.name AS victim_character_name,
+               v.corporation_id AS victim_corporation_id,
+               v.alliance_id AS victim_alliance_id,
+               (SELECT COUNT(*) FROM killmail_attackers a2
+                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+        FROM killmail_attackers a
+        JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
+        LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
+        LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
+        LEFT JOIN characters c ON c.character_id = v.character_id
+        WHERE a.alliance_id = $1
+        GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
+                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id
+        ORDER BY k.kill_time DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(alliance_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(alliance_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_alliance_kills_summary");
+    Ok(rows)
+}
+
+pub async fn count_alliance_kills(pool: &PgPool, alliance_id: i64) -> Result<i64, DbError> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(DISTINCT (a.killmail_id, a.kill_time))
+        FROM killmail_attackers a
+        WHERE a.alliance_id = $1
+        "#,
+    )
+    .bind(alliance_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn get_alliance_losses_summary(
+    pool: &PgPool,
+    alliance_id: i64,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<KillmailSummary>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, KillmailSummary>(
+        r#"
+        SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
+               v.ship_type_id AS victim_ship_type_id,
+               st.name AS victim_ship_name,
+               v.character_id AS victim_character_id,
+               c.name AS victim_character_name,
+               v.corporation_id AS victim_corporation_id,
+               v.alliance_id AS victim_alliance_id,
+               (SELECT COUNT(*) FROM killmail_attackers a2
+                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+        FROM killmail_victims v
+        JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
+        LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
+        LEFT JOIN characters c ON c.character_id = v.character_id
+        WHERE v.alliance_id = $1
+        ORDER BY k.kill_time DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(alliance_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    debug!(alliance_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_alliance_losses_summary");
+    Ok(rows)
+}
+
+pub async fn count_alliance_losses(pool: &PgPool, alliance_id: i64) -> Result<i64, DbError> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM killmail_victims v
+        WHERE v.alliance_id = $1
+        "#,
+    )
+    .bind(alliance_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn get_killmail_by_id(pool: &PgPool, killmail_id: i64) -> Result<Option<Killmail>, DbError> {
+    let start = Instant::now();
+    let row = sqlx::query_as::<_, Killmail>(
+        r#"
+        SELECT killmail_id, kill_time, solar_system_id, total_value, r2z2_sequence_id
+        FROM killmails
+        WHERE killmail_id = $1
+        LIMIT 1
+        "#,
+    )
+    .bind(killmail_id)
+    .fetch_optional(pool)
+    .await?;
+    debug!(killmail_id, found = row.is_some(), elapsed_ms = start.elapsed().as_millis() as u64, "get_killmail_by_id");
+    Ok(row)
+}
+
+pub async fn get_killmail_victim_detail(
+    pool: &PgPool,
+    killmail_id: i64,
+    kill_time: DateTime<Utc>,
+) -> Result<Option<KillmailVictimDetail>, DbError> {
+    let row = sqlx::query_as::<_, KillmailVictimDetail>(
+        r#"
+        SELECT v.ship_type_id,
+               st.name AS ship_name,
+               v.character_id,
+               c.name AS character_name,
+               v.corporation_id,
+               co.name AS corporation_name,
+               v.alliance_id,
+               al.name AS alliance_name
+        FROM killmail_victims v
+        LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
+        LEFT JOIN characters c ON c.character_id = v.character_id
+        LEFT JOIN corporations co ON co.corporation_id = v.corporation_id
+        LEFT JOIN alliances al ON al.alliance_id = v.alliance_id
+        WHERE v.killmail_id = $1 AND v.kill_time = $2
+        "#,
+    )
+    .bind(killmail_id)
+    .bind(kill_time)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn get_killmail_attackers_detail(
+    pool: &PgPool,
+    killmail_id: i64,
+    kill_time: DateTime<Utc>,
+) -> Result<Vec<KillmailAttackerDetail>, DbError> {
+    let rows = sqlx::query_as::<_, KillmailAttackerDetail>(
+        r#"
+        SELECT a.character_id,
+               c.name AS character_name,
+               a.corporation_id,
+               co.name AS corporation_name,
+               a.alliance_id,
+               al.name AS alliance_name,
+               a.ship_type_id,
+               st.name AS ship_name,
+               a.weapon_type_id,
+               wt.name AS weapon_name,
+               a.damage_done,
+               a.final_blow
+        FROM killmail_attackers a
+        LEFT JOIN characters c ON c.character_id = a.character_id
+        LEFT JOIN corporations co ON co.corporation_id = a.corporation_id
+        LEFT JOIN alliances al ON al.alliance_id = a.alliance_id
+        LEFT JOIN sde_types st ON st.type_id = a.ship_type_id
+        LEFT JOIN sde_types wt ON wt.type_id = a.weapon_type_id
+        WHERE a.killmail_id = $1 AND a.kill_time = $2
+        ORDER BY a.damage_done DESC
+        "#,
+    )
+    .bind(killmail_id)
+    .bind(kill_time)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn get_killmail_items_detail(
+    pool: &PgPool,
+    killmail_id: i64,
+    kill_time: DateTime<Utc>,
+) -> Result<Vec<KillmailItemDetail>, DbError> {
+    let rows = sqlx::query_as::<_, KillmailItemDetail>(
+        r#"
+        SELECT i.type_id,
+               st.name AS type_name,
+               i.quantity_destroyed,
+               i.quantity_dropped,
+               i.flag
+        FROM killmail_items i
+        LEFT JOIN sde_types st ON st.type_id = i.type_id
+        WHERE i.killmail_id = $1 AND i.kill_time = $2
+        ORDER BY i.flag, st.name
+        "#,
+    )
+    .bind(killmail_id)
+    .bind(kill_time)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// Get character IDs that have activity but are not yet in the characters cache.
 pub async fn get_uncached_character_ids(
     pool: &PgPool,

@@ -8,7 +8,7 @@ use tracing::{debug, info};
 
 use crate::error::ApiError;
 use crate::state::AppState;
-use nea_db::{Character, CharacterProfile, Killmail};
+use nea_db::{Character, CharacterProfile, KillmailSummary};
 
 #[derive(Deserialize)]
 pub struct SearchParams {
@@ -31,9 +31,18 @@ pub struct CharacterDetail {
     pub profile: Option<CharacterProfile>,
 }
 
+#[derive(Serialize)]
+pub struct PaginatedKillmails {
+    pub killmails: Vec<KillmailSummary>,
+    pub page: i32,
+    pub per_page: i32,
+    pub total: i64,
+}
+
 #[derive(Deserialize)]
-pub struct LimitParams {
-    pub limit: Option<i32>,
+pub struct PaginationParams {
+    pub page: Option<i32>,
+    pub per_page: Option<i32>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -96,22 +105,36 @@ async fn get_character(
 async fn get_character_kills(
     State(state): State<AppState>,
     Path(character_id): Path<i64>,
-    Query(params): Query<LimitParams>,
-) -> Result<Json<Vec<Killmail>>, ApiError> {
-    let limit = params.limit.unwrap_or(20).clamp(1, 100);
-    let kills = nea_db::get_character_kills(&state.pool, character_id, limit).await?;
-    debug!(character_id, kills = kills.len(), "get_character_kills");
-    Ok(Json(kills))
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<PaginatedKillmails>, ApiError> {
+    let page = params.page.unwrap_or(1).max(1);
+    let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1) * per_page;
+
+    let (killmails, total) = tokio::try_join!(
+        nea_db::get_character_kills_summary(&state.pool, character_id, per_page, offset),
+        nea_db::count_character_kills(&state.pool, character_id),
+    )?;
+
+    debug!(character_id, kills = killmails.len(), total, page, "get_character_kills");
+    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
 }
 
 #[tracing::instrument(skip(state, params))]
 async fn get_character_losses(
     State(state): State<AppState>,
     Path(character_id): Path<i64>,
-    Query(params): Query<LimitParams>,
-) -> Result<Json<Vec<Killmail>>, ApiError> {
-    let limit = params.limit.unwrap_or(20).clamp(1, 100);
-    let losses = nea_db::get_character_losses(&state.pool, character_id, limit).await?;
-    debug!(character_id, losses = losses.len(), "get_character_losses");
-    Ok(Json(losses))
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<PaginatedKillmails>, ApiError> {
+    let page = params.page.unwrap_or(1).max(1);
+    let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1) * per_page;
+
+    let (killmails, total) = tokio::try_join!(
+        nea_db::get_character_losses_summary(&state.pool, character_id, per_page, offset),
+        nea_db::count_character_losses(&state.pool, character_id),
+    )?;
+
+    debug!(character_id, losses = killmails.len(), total, page, "get_character_losses");
+    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
 }

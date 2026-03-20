@@ -4,22 +4,18 @@
 	import { api } from '$lib/api/client';
 	import type {
 		CharacterDetail,
-		KillmailEntry,
 		ShipCount,
 		FittingCluster
 	} from '$lib/api/client';
-	import { formatNumber, formatPrice } from '$lib/utils/formatters';
+	import { formatNumber } from '$lib/utils/formatters';
 	import FittingCard from '$lib/components/FittingCard.svelte';
+	import KillLossTabs from '$lib/components/KillLossTabs.svelte';
 
 	let characterId = $derived(Number($page.params.characterId));
 
 	let detail = $state<CharacterDetail | null>(null);
-	let kills = $state<KillmailEntry[]>([]);
-	let losses = $state<KillmailEntry[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-	let warnings = $state<string[]>([]);
-	let activeTab = $state<'kills' | 'losses'>('kills');
 
 	onMount(() => {
 		if (isNaN(characterId) || characterId <= 0) {
@@ -34,29 +30,7 @@
 		loading = true;
 		error = null;
 		try {
-			const [charData, killsData, lossesData] = await Promise.allSettled([
-				api.getCharacter(characterId),
-				api.getCharacterKills(characterId),
-				api.getCharacterLosses(characterId)
-			]);
-
-			if (charData.status === 'fulfilled') detail = charData.value;
-			else throw new Error('Failed to load character');
-
-			const loadWarnings: string[] = [];
-			if (killsData.status === 'fulfilled') {
-				kills = killsData.value;
-			} else {
-				console.warn('[nea] partial load failure: kills', killsData.reason);
-				loadWarnings.push('Kill data unavailable');
-			}
-			if (lossesData.status === 'fulfilled') {
-				losses = lossesData.value;
-			} else {
-				console.warn('[nea] partial load failure: losses', lossesData.reason);
-				loadWarnings.push('Loss data unavailable');
-			}
-			warnings = loadWarnings;
+			detail = await api.getCharacter(characterId);
 		} catch (e) {
 			console.error('[nea] character detail load failed', e);
 			error = e instanceof Error ? e.message : 'Failed to load character data';
@@ -154,14 +128,6 @@
 				{/if}
 			</div>
 		</section>
-
-		{#if warnings.length > 0}
-			<div class="rounded-lg border border-[var(--color-accent-yellow,#d29922)] bg-[var(--color-bg-secondary)] p-4">
-				{#each warnings as warning}
-					<p class="text-sm text-[var(--color-accent-yellow,#d29922)]">{warning}</p>
-				{/each}
-			</div>
-		{/if}
 
 		<!-- Stats Cards -->
 		{#if profile}
@@ -270,65 +236,6 @@
 			</section>
 		{/if}
 
-		<!-- Recent Activity -->
-		<section>
-			<h2 class="mb-4 text-lg font-semibold">Recent Activity</h2>
-			<div class="mb-4 flex gap-2">
-				<button
-					onclick={() => (activeTab = 'kills')}
-					class="rounded border px-4 py-2 text-sm transition-colors"
-					class:border-[var(--color-accent-blue)]={activeTab === 'kills'}
-					class:text-[var(--color-accent-blue)]={activeTab === 'kills'}
-					class:border-[var(--color-border)]={activeTab !== 'kills'}
-					class:text-[var(--color-text-secondary)]={activeTab !== 'kills'}
-				>
-					Kills ({kills.length})
-				</button>
-				<button
-					onclick={() => (activeTab = 'losses')}
-					class="rounded border px-4 py-2 text-sm transition-colors"
-					class:border-[var(--color-accent-red)]={activeTab === 'losses'}
-					class:text-[var(--color-accent-red)]={activeTab === 'losses'}
-					class:border-[var(--color-border)]={activeTab !== 'losses'}
-					class:text-[var(--color-text-secondary)]={activeTab !== 'losses'}
-				>
-					Losses ({losses.length})
-				</button>
-			</div>
-
-			{#if (activeTab === 'kills' ? kills : losses).length > 0}
-				{@const activeData = activeTab === 'kills' ? kills : losses}
-				<div class="overflow-x-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-					<table class="w-full text-left text-sm">
-						<thead>
-							<tr class="border-b border-[var(--color-border)] text-[var(--color-text-secondary)]">
-								<th class="px-4 py-3 font-medium">Killmail ID</th>
-								<th class="px-4 py-3 font-medium">Time</th>
-								<th class="px-4 py-3 font-medium text-right">Value</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each activeData as km}
-								<tr class="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-bg-tertiary)]">
-									<td class="px-4 py-3 font-mono text-[var(--color-text-primary)]">
-										{km.killmail_id}
-									</td>
-									<td class="px-4 py-3 text-[var(--color-text-secondary)]">
-										{new Date(km.kill_time).toLocaleString()}
-									</td>
-									<td class="px-4 py-3 text-right font-mono text-[var(--color-text-secondary)]">
-										{km.total_value != null ? formatPrice(km.total_value) : '--'}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			{:else}
-				<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-8 text-center text-[var(--color-text-secondary)]">
-					No {activeTab} data available.
-				</div>
-			{/if}
-		</section>
+		<KillLossTabs entityType="character" entityId={characterId} />
 	{/if}
 </div>

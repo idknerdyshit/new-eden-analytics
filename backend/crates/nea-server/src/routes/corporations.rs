@@ -8,7 +8,7 @@ use tracing::{debug, info};
 
 use crate::error::ApiError;
 use crate::state::AppState;
-use nea_db::{Corporation, DoctrineProfile};
+use nea_db::{Corporation, DoctrineProfile, KillmailSummary};
 
 #[derive(Deserialize)]
 pub struct SearchParams {
@@ -31,10 +31,26 @@ pub struct CorporationDetail {
     pub profiles: Vec<DoctrineProfile>,
 }
 
+#[derive(Serialize)]
+pub struct PaginatedKillmails {
+    pub killmails: Vec<KillmailSummary>,
+    pub page: i32,
+    pub per_page: i32,
+    pub total: i64,
+}
+
+#[derive(Deserialize)]
+pub struct PaginationParams {
+    pub page: Option<i32>,
+    pub per_page: Option<i32>,
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/corporations/search", get(search_corporations))
         .route("/corporations/{corp_id}", get(get_corporation))
+        .route("/corporations/{corp_id}/kills", get(get_corporation_kills))
+        .route("/corporations/{corp_id}/losses", get(get_corporation_losses))
 }
 
 #[tracing::instrument(skip(state, params))]
@@ -86,4 +102,42 @@ async fn get_corporation(
         corporation,
         profiles,
     }))
+}
+
+#[tracing::instrument(skip(state, params))]
+async fn get_corporation_kills(
+    State(state): State<AppState>,
+    Path(corp_id): Path<i64>,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<PaginatedKillmails>, ApiError> {
+    let page = params.page.unwrap_or(1).max(1);
+    let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1) * per_page;
+
+    let (killmails, total) = tokio::try_join!(
+        nea_db::get_corporation_kills_summary(&state.pool, corp_id, per_page, offset),
+        nea_db::count_corporation_kills(&state.pool, corp_id),
+    )?;
+
+    debug!(corp_id, kills = killmails.len(), total, page, "get_corporation_kills");
+    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
+}
+
+#[tracing::instrument(skip(state, params))]
+async fn get_corporation_losses(
+    State(state): State<AppState>,
+    Path(corp_id): Path<i64>,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<PaginatedKillmails>, ApiError> {
+    let page = params.page.unwrap_or(1).max(1);
+    let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1) * per_page;
+
+    let (killmails, total) = tokio::try_join!(
+        nea_db::get_corporation_losses_summary(&state.pool, corp_id, per_page, offset),
+        nea_db::count_corporation_losses(&state.pool, corp_id),
+    )?;
+
+    debug!(corp_id, losses = killmails.len(), total, page, "get_corporation_losses");
+    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
 }

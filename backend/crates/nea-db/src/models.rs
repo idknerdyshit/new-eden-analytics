@@ -229,6 +229,68 @@ pub struct DoctrineProfile {
     pub computed_at: DateTime<Utc>,
 }
 
+// ── Killmail summaries / details ──
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct KillmailSummary {
+    pub killmail_id: i64,
+    pub kill_time: DateTime<Utc>,
+    pub solar_system_id: Option<i32>,
+    pub total_value: Option<f64>,
+    pub victim_ship_type_id: Option<i32>,
+    pub victim_ship_name: Option<String>,
+    pub victim_character_id: Option<i64>,
+    pub victim_character_name: Option<String>,
+    pub victim_corporation_id: Option<i64>,
+    pub victim_alliance_id: Option<i64>,
+    pub attacker_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct KillmailVictimDetail {
+    pub ship_type_id: i32,
+    pub ship_name: Option<String>,
+    pub character_id: Option<i64>,
+    pub character_name: Option<String>,
+    pub corporation_id: Option<i64>,
+    pub corporation_name: Option<String>,
+    pub alliance_id: Option<i64>,
+    pub alliance_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct KillmailAttackerDetail {
+    pub character_id: Option<i64>,
+    pub character_name: Option<String>,
+    pub corporation_id: Option<i64>,
+    pub corporation_name: Option<String>,
+    pub alliance_id: Option<i64>,
+    pub alliance_name: Option<String>,
+    pub ship_type_id: i32,
+    pub ship_name: Option<String>,
+    pub weapon_type_id: i32,
+    pub weapon_name: Option<String>,
+    pub damage_done: i32,
+    pub final_blow: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct KillmailItemDetail {
+    pub type_id: i32,
+    pub type_name: Option<String>,
+    pub quantity_destroyed: i64,
+    pub quantity_dropped: i64,
+    pub flag: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KillmailDetail {
+    pub killmail: Killmail,
+    pub victim: KillmailVictimDetail,
+    pub attackers: Vec<KillmailAttackerDetail>,
+    pub items: Vec<KillmailItemDetail>,
+}
+
 // ── Worker ──
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

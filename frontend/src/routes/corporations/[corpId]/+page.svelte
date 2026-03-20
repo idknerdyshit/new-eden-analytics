@@ -12,6 +12,7 @@
 	} from '$lib/api/client';
 	import { formatNumber } from '$lib/utils/formatters';
 	import FittingCard from '$lib/components/FittingCard.svelte';
+	import KillLossTabs from '$lib/components/KillLossTabs.svelte';
 
 	let corpId = $derived(Number($page.params.corpId));
 
@@ -357,5 +358,7 @@
 				the next aggregation cycle.
 			</div>
 		{/if}
+
+		<KillLossTabs entityType="corporation" entityId={corpId} />
 	{/if}
 </div>

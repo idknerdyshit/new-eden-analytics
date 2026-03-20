@@ -6,6 +6,7 @@ pub mod corporations;
 pub mod dashboard;
 pub mod destruction;
 pub mod items;
+pub mod killmails;
 pub mod market;
 
 use axum::{
@@ -109,6 +110,7 @@ fn api_router() -> Router<AppState> {
         .merge(characters::routes())
         .merge(corporations::routes())
         .merge(alliances::routes())
+        .merge(killmails::routes())
         .merge(auth::routes())
 }
 
