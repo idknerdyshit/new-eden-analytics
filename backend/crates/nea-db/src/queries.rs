@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -74,6 +75,24 @@ pub async fn get_type(pool: &PgPool, type_id: i32) -> Result<Option<SdeType>, Db
     .await?;
     debug!(type_id, found = row.is_some(), elapsed_ms = start.elapsed().as_millis() as u64, "get_type");
     Ok(row)
+}
+
+pub async fn get_type_names(
+    pool: &PgPool,
+    type_ids: &[i32],
+) -> Result<HashMap<i32, String>, DbError> {
+    if type_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let start = Instant::now();
+    let rows: Vec<(i32, String)> = sqlx::query_as(
+        "SELECT type_id, name FROM sde_types WHERE type_id = ANY($1)",
+    )
+    .bind(type_ids)
+    .fetch_all(pool)
+    .await?;
+    debug!(count = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_type_names");
+    Ok(rows.into_iter().collect())
 }
 
 pub async fn get_product_materials(
@@ -233,6 +252,31 @@ pub async fn insert_market_snapshot(
     Ok(())
 }
 
+pub async fn insert_market_snapshots(
+    pool: &PgPool,
+    snapshots: &[MarketSnapshot],
+) -> Result<(), DbError> {
+    for chunk in snapshots.chunks(BATCH_SIZE) {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO market_snapshots (type_id, region_id, station_id, ts, best_bid, best_ask, bid_volume, ask_volume, spread) ",
+        );
+        qb.push_values(chunk, |mut b, snap| {
+            b.push_bind(snap.type_id)
+                .push_bind(snap.region_id)
+                .push_bind(snap.station_id)
+                .push_bind(snap.ts)
+                .push_bind(snap.best_bid)
+                .push_bind(snap.best_ask)
+                .push_bind(snap.bid_volume)
+                .push_bind(snap.ask_volume)
+                .push_bind(snap.spread);
+        });
+        qb.push(" ON CONFLICT DO NOTHING");
+        qb.build().execute(pool).await?;
+    }
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Kill queries
 // ═══════════════════════════════════════════════════════════════════
@@ -328,6 +372,37 @@ pub async fn insert_killmail_attackers(
         qb.build().execute(pool).await?;
     }
     Ok(())
+}
+
+pub async fn get_killmail_items_batch(
+    pool: &PgPool,
+    keys: &[(i64, DateTime<Utc>)],
+) -> Result<HashMap<i64, Vec<(i32, i32)>>, DbError> {
+    if keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let start = Instant::now();
+    let km_ids: Vec<i64> = keys.iter().map(|(id, _)| *id).collect();
+    let km_times: Vec<DateTime<Utc>> = keys.iter().map(|(_, t)| *t).collect();
+    let rows: Vec<(i64, i32, i32)> = sqlx::query_as(
+        r#"
+        SELECT i.killmail_id, i.type_id, i.flag
+        FROM killmail_items i
+        INNER JOIN UNNEST($1::bigint[], $2::timestamptz[]) AS k(killmail_id, kill_time)
+          ON i.killmail_id = k.killmail_id AND i.kill_time = k.kill_time
+        WHERE i.flag != 0
+        "#,
+    )
+    .bind(&km_ids)
+    .bind(&km_times)
+    .fetch_all(pool)
+    .await?;
+    let mut map: HashMap<i64, Vec<(i32, i32)>> = HashMap::new();
+    for (km_id, type_id, flag) in rows {
+        map.entry(km_id).or_default().push((type_id, flag));
+    }
+    debug!(keys = keys.len(), items = map.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_killmail_items_batch");
+    Ok(map)
 }
 
 pub async fn get_daily_destruction(
@@ -952,16 +1027,21 @@ pub async fn get_character_kills_summary(
                c.name AS victim_character_name,
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
-               (SELECT COUNT(*) FROM killmail_attackers a2
-                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+               ac.attacker_count
         FROM killmail_attackers a
         JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
         LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::bigint AS attacker_count
+            FROM killmail_attackers a2
+            WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
+        ) ac ON true
         WHERE a.character_id = $1
         GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
-                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id
+                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id,
+                 ac.attacker_count
         ORDER BY k.kill_time DESC
         LIMIT $2 OFFSET $3
         "#,
@@ -978,7 +1058,7 @@ pub async fn get_character_kills_summary(
 pub async fn count_character_kills(pool: &PgPool, character_id: i64) -> Result<i64, DbError> {
     let (count,): (i64,) = sqlx::query_as(
         r#"
-        SELECT COUNT(DISTINCT (a.killmail_id, a.kill_time))
+        SELECT COUNT(DISTINCT a.killmail_id)
         FROM killmail_attackers a
         WHERE a.character_id = $1
         "#,
@@ -1005,12 +1085,16 @@ pub async fn get_character_losses_summary(
                c.name AS victim_character_name,
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
-               (SELECT COUNT(*) FROM killmail_attackers a2
-                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+               ac.attacker_count
         FROM killmail_victims v
         JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::bigint AS attacker_count
+            FROM killmail_attackers a2
+            WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
+        ) ac ON true
         WHERE v.character_id = $1
         ORDER BY k.kill_time DESC
         LIMIT $2 OFFSET $3
@@ -1055,16 +1139,21 @@ pub async fn get_corporation_kills_summary(
                c.name AS victim_character_name,
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
-               (SELECT COUNT(*) FROM killmail_attackers a2
-                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+               ac.attacker_count
         FROM killmail_attackers a
         JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
         LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::bigint AS attacker_count
+            FROM killmail_attackers a2
+            WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
+        ) ac ON true
         WHERE a.corporation_id = $1
         GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
-                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id
+                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id,
+                 ac.attacker_count
         ORDER BY k.kill_time DESC
         LIMIT $2 OFFSET $3
         "#,
@@ -1081,7 +1170,7 @@ pub async fn get_corporation_kills_summary(
 pub async fn count_corporation_kills(pool: &PgPool, corporation_id: i64) -> Result<i64, DbError> {
     let (count,): (i64,) = sqlx::query_as(
         r#"
-        SELECT COUNT(DISTINCT (a.killmail_id, a.kill_time))
+        SELECT COUNT(DISTINCT a.killmail_id)
         FROM killmail_attackers a
         WHERE a.corporation_id = $1
         "#,
@@ -1108,12 +1197,16 @@ pub async fn get_corporation_losses_summary(
                c.name AS victim_character_name,
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
-               (SELECT COUNT(*) FROM killmail_attackers a2
-                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+               ac.attacker_count
         FROM killmail_victims v
         JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::bigint AS attacker_count
+            FROM killmail_attackers a2
+            WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
+        ) ac ON true
         WHERE v.corporation_id = $1
         ORDER BY k.kill_time DESC
         LIMIT $2 OFFSET $3
@@ -1158,16 +1251,21 @@ pub async fn get_alliance_kills_summary(
                c.name AS victim_character_name,
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
-               (SELECT COUNT(*) FROM killmail_attackers a2
-                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+               ac.attacker_count
         FROM killmail_attackers a
         JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
         LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::bigint AS attacker_count
+            FROM killmail_attackers a2
+            WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
+        ) ac ON true
         WHERE a.alliance_id = $1
         GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
-                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id
+                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id,
+                 ac.attacker_count
         ORDER BY k.kill_time DESC
         LIMIT $2 OFFSET $3
         "#,
@@ -1184,7 +1282,7 @@ pub async fn get_alliance_kills_summary(
 pub async fn count_alliance_kills(pool: &PgPool, alliance_id: i64) -> Result<i64, DbError> {
     let (count,): (i64,) = sqlx::query_as(
         r#"
-        SELECT COUNT(DISTINCT (a.killmail_id, a.kill_time))
+        SELECT COUNT(DISTINCT a.killmail_id)
         FROM killmail_attackers a
         WHERE a.alliance_id = $1
         "#,
@@ -1211,12 +1309,16 @@ pub async fn get_alliance_losses_summary(
                c.name AS victim_character_name,
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
-               (SELECT COUNT(*) FROM killmail_attackers a2
-                WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time) AS attacker_count
+               ac.attacker_count
         FROM killmail_victims v
         JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::bigint AS attacker_count
+            FROM killmail_attackers a2
+            WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
+        ) ac ON true
         WHERE v.alliance_id = $1
         ORDER BY k.kill_time DESC
         LIMIT $2 OFFSET $3
@@ -1360,12 +1462,14 @@ pub async fn get_uncached_character_ids(
 ) -> Result<Vec<i64>, DbError> {
     let rows: Vec<(i64,)> = sqlx::query_as(
         r#"
-        SELECT character_id FROM (
-            SELECT DISTINCT character_id FROM killmail_attackers WHERE character_id IS NOT NULL
+        SELECT DISTINCT character_id FROM (
+            SELECT character_id FROM killmail_attackers
+            WHERE character_id IS NOT NULL AND kill_time > NOW() - INTERVAL '30 days'
             UNION
-            SELECT DISTINCT character_id FROM killmail_victims WHERE character_id IS NOT NULL
+            SELECT character_id FROM killmail_victims
+            WHERE character_id IS NOT NULL AND kill_time > NOW() - INTERVAL '30 days'
         ) all_chars
-        WHERE character_id NOT IN (SELECT character_id FROM characters)
+        WHERE NOT EXISTS (SELECT 1 FROM characters c WHERE c.character_id = all_chars.character_id)
         LIMIT $1
         "#,
     )
@@ -1410,6 +1514,7 @@ pub async fn get_active_character_ids_since(
             SELECT character_id FROM killmail_victims
             WHERE character_id IS NOT NULL AND kill_time > $1
         ) active
+        LIMIT 2000
         "#,
     )
     .bind(since)
@@ -1655,6 +1760,7 @@ pub async fn get_active_corporation_ids_since(
             SELECT corporation_id FROM killmail_victims
             WHERE corporation_id IS NOT NULL AND kill_time > $1
         ) active
+        LIMIT 2000
         "#,
     )
     .bind(since)
@@ -1676,6 +1782,7 @@ pub async fn get_active_alliance_ids_since(
             SELECT alliance_id FROM killmail_victims
             WHERE alliance_id IS NOT NULL AND kill_time > $1
         ) active
+        LIMIT 2000
         "#,
     )
     .bind(since)
@@ -1690,12 +1797,14 @@ pub async fn get_uncached_corporation_ids(
 ) -> Result<Vec<i64>, DbError> {
     let rows: Vec<(i64,)> = sqlx::query_as(
         r#"
-        SELECT corporation_id FROM (
-            SELECT DISTINCT corporation_id FROM killmail_attackers WHERE corporation_id IS NOT NULL
+        SELECT DISTINCT corporation_id FROM (
+            SELECT corporation_id FROM killmail_attackers
+            WHERE corporation_id IS NOT NULL AND kill_time > NOW() - INTERVAL '30 days'
             UNION
-            SELECT DISTINCT corporation_id FROM killmail_victims WHERE corporation_id IS NOT NULL
+            SELECT corporation_id FROM killmail_victims
+            WHERE corporation_id IS NOT NULL AND kill_time > NOW() - INTERVAL '30 days'
         ) all_corps
-        WHERE corporation_id NOT IN (SELECT corporation_id FROM corporations)
+        WHERE NOT EXISTS (SELECT 1 FROM corporations c WHERE c.corporation_id = all_corps.corporation_id)
         LIMIT $1
         "#,
     )
@@ -1711,12 +1820,14 @@ pub async fn get_uncached_alliance_ids(
 ) -> Result<Vec<i64>, DbError> {
     let rows: Vec<(i64,)> = sqlx::query_as(
         r#"
-        SELECT alliance_id FROM (
-            SELECT DISTINCT alliance_id FROM killmail_attackers WHERE alliance_id IS NOT NULL
+        SELECT DISTINCT alliance_id FROM (
+            SELECT alliance_id FROM killmail_attackers
+            WHERE alliance_id IS NOT NULL AND kill_time > NOW() - INTERVAL '30 days'
             UNION
-            SELECT DISTINCT alliance_id FROM killmail_victims WHERE alliance_id IS NOT NULL
+            SELECT alliance_id FROM killmail_victims
+            WHERE alliance_id IS NOT NULL AND kill_time > NOW() - INTERVAL '30 days'
         ) all_alliances
-        WHERE alliance_id NOT IN (SELECT alliance_id FROM alliances)
+        WHERE NOT EXISTS (SELECT 1 FROM alliances a WHERE a.alliance_id = all_alliances.alliance_id)
         LIMIT $1
         "#,
     )

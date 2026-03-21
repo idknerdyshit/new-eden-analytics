@@ -8,7 +8,7 @@ use nea_esi::EsiClient;
 use sqlx::PgPool;
 use tokio::time;
 
-use crate::fitting_utils::{cluster_fittings, get_type_name, is_fitted_slot};
+use crate::fitting_utils::{cluster_fittings, resolve_type_name, is_fitted_slot};
 
 const WORKER_STATE_KEY: &str = "doctrine_aggregation_last_run";
 const WINDOWS: &[i32] = &[7, 30, 90];
@@ -340,21 +340,24 @@ async fn compute_ship_usage(
         .await?;
 
     let total: i64 = rows.iter().map(|(_, c)| c).sum();
-    let mut result = Vec::new();
-    for (type_id, count) in &rows {
-        let name = get_type_name(pool, *type_id).await;
-        let pct = if total > 0 {
-            (*count as f64 / total as f64 * 100.0).round()
-        } else {
-            0.0
-        };
-        result.push(serde_json::json!({
-            "type_id": type_id,
-            "name": name,
-            "count": count,
-            "pct": pct,
-        }));
-    }
+    let type_ids: Vec<i32> = rows.iter().map(|(id, _)| *id).collect();
+    let names = nea_db::get_type_names(pool, &type_ids).await?;
+    let result: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|(type_id, count)| {
+            let pct = if total > 0 {
+                (*count as f64 / total as f64 * 100.0).round()
+            } else {
+                0.0
+            };
+            serde_json::json!({
+                "type_id": type_id,
+                "name": resolve_type_name(&names, *type_id),
+                "count": count,
+                "pct": pct,
+            })
+        })
+        .collect();
     Ok(result)
 }
 
@@ -592,6 +595,15 @@ async fn compute_doctrines(
     }
 
     // ── Step 6: Assemble output ──────────────────────────────────────
+    // Batch resolve names for ships without fit data
+    let unresolved_ids: Vec<i32> = doctrine_groups
+        .iter()
+        .flat_map(|g| g.iter())
+        .filter(|tid| !fit_data.contains_key(tid))
+        .copied()
+        .collect();
+    let extra_names = nea_db::get_type_names(pool, &unresolved_ids).await?;
+
     let mut result = Vec::new();
     for group in &doctrine_groups {
         let ships: Vec<serde_json::Value> = group
@@ -607,10 +619,9 @@ async fn compute_doctrines(
                         "pilot_count": d.pilot_count,
                     })
                 } else {
-                    let name = tid.to_string(); // resolved below
                     serde_json::json!({
                         "ship_type_id": tid,
-                        "ship_name": name,
+                        "ship_name": resolve_type_name(&extra_names, tid),
                         "canonical_fit": [],
                         "variants": [],
                         "occurrences": 0,
@@ -620,20 +631,6 @@ async fn compute_doctrines(
             })
             .collect();
         result.push(serde_json::json!({ "ships": ships }));
-    }
-
-    // Resolve names for ships without fit data
-    for group_val in &mut result {
-        if let Some(ships) = group_val.get_mut("ships").and_then(|s| s.as_array_mut()) {
-            for ship in ships.iter_mut() {
-                if ship.get("canonical_fit").and_then(|f| f.as_array()).map(|a| a.is_empty()).unwrap_or(true) {
-                    if let Some(tid) = ship.get("ship_type_id").and_then(|t| t.as_i64()) {
-                        let name = get_type_name(pool, tid as i32).await;
-                        ship["ship_name"] = serde_json::Value::String(name);
-                    }
-                }
-            }
-        }
     }
 
     Ok(result)
@@ -658,7 +655,7 @@ async fn compute_ship_fits(
 ) -> Result<Option<ShipFitData>, Box<dyn std::error::Error + Send + Sync>> {
     let query = format!(
         r#"
-        SELECT killmail_id, kill_time
+        SELECT killmail_id, kill_time, character_id
         FROM killmail_victims
         WHERE {} = $1 AND ship_type_id = $2
           AND kill_time >= NOW() - $3 * INTERVAL '1 day'
@@ -667,7 +664,7 @@ async fn compute_ship_fits(
         "#,
         column
     );
-    let loss_killmails: Vec<(i64, chrono::DateTime<Utc>)> = sqlx::query_as(&query)
+    let loss_killmails: Vec<(i64, chrono::DateTime<Utc>, Option<i64>)> = sqlx::query_as(&query)
         .bind(entity_id)
         .bind(ship_type_id)
         .bind(window_days)
@@ -678,41 +675,27 @@ async fn compute_ship_fits(
         return Ok(None);
     }
 
+    // Collect pilot IDs directly from the loss query (Issue 3: no separate fetch)
+    let pilot_ids: HashSet<Option<i64>> = loss_killmails.iter().map(|(_, _, cid)| *cid).collect();
+
+    // Batch fetch all killmail items (Issue 2: no per-killmail fetch)
+    let km_keys: Vec<(i64, chrono::DateTime<Utc>)> = loss_killmails
+        .iter()
+        .map(|(id, t, _)| (*id, *t))
+        .collect();
+    let items_map = nea_db::get_killmail_items_batch(pool, &km_keys).await?;
+
     let mut fittings: Vec<Vec<(i32, i32)>> = Vec::new();
-    let mut pilot_ids: HashSet<Option<i64>> = HashSet::new();
-
-    for (km_id, km_time) in &loss_killmails {
-        let items: Vec<(i32, i32)> = sqlx::query_as(
-            r#"
-            SELECT type_id, flag
-            FROM killmail_items
-            WHERE killmail_id = $1 AND kill_time = $2
-              AND flag != 0
-            "#,
-        )
-        .bind(km_id)
-        .bind(km_time)
-        .fetch_all(pool)
-        .await?;
-
-        let fitted: Vec<(i32, i32)> = items
-            .into_iter()
-            .filter(|(_, flag)| is_fitted_slot(*flag))
-            .collect();
-
-        if !fitted.is_empty() {
-            fittings.push(fitted);
-        }
-
-        let victim: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT character_id FROM killmail_victims WHERE killmail_id = $1 AND kill_time = $2",
-        )
-        .bind(km_id)
-        .bind(km_time)
-        .fetch_optional(pool)
-        .await?;
-        if let Some((char_id,)) = victim {
-            pilot_ids.insert(char_id);
+    for (km_id, _, _) in &loss_killmails {
+        if let Some(items) = items_map.get(km_id) {
+            let fitted: Vec<(i32, i32)> = items
+                .iter()
+                .filter(|(_, flag)| is_fitted_slot(*flag))
+                .cloned()
+                .collect();
+            if !fitted.is_empty() {
+                fittings.push(fitted);
+            }
         }
     }
 
@@ -721,7 +704,6 @@ async fn compute_ship_fits(
     }
 
     let clusters = cluster_fittings(&fittings, 0.7);
-    let ship_name = get_type_name(pool, ship_type_id).await;
 
     // Take the largest cluster that qualifies
     let best = clusters.into_iter().filter(|c| c.count >= 3).max_by_key(|c| c.count);
@@ -730,16 +712,33 @@ async fn compute_ship_fits(
         return Ok(None);
     };
 
+    // Batch resolve all type names (ship + all modules in canonical + variants)
+    let mut all_type_ids: Vec<i32> = vec![ship_type_id];
     let canonical = &fittings[cluster.canonical_idx];
-    let mut modules = Vec::new();
-    for (type_id, flag) in canonical {
-        let name = get_type_name(pool, *type_id).await;
-        modules.push(serde_json::json!({
-            "type_id": type_id,
-            "name": name,
-            "flag": flag,
-        }));
+    for (type_id, _) in canonical {
+        all_type_ids.push(*type_id);
     }
+    for &idx in &cluster.member_indices {
+        for (type_id, _) in &fittings[idx] {
+            all_type_ids.push(*type_id);
+        }
+    }
+    all_type_ids.sort_unstable();
+    all_type_ids.dedup();
+    let type_names = nea_db::get_type_names(pool, &all_type_ids).await?;
+
+    let ship_name = resolve_type_name(&type_names, ship_type_id);
+
+    let modules: Vec<serde_json::Value> = canonical
+        .iter()
+        .map(|(type_id, flag)| {
+            serde_json::json!({
+                "type_id": type_id,
+                "name": resolve_type_name(&type_names, *type_id),
+                "flag": flag,
+            })
+        })
+        .collect();
 
     let canonical_sorted: Vec<i32> = {
         let mut s: Vec<i32> = canonical.iter().map(|(tid, _)| *tid).collect();
@@ -755,15 +754,16 @@ async fn compute_ship_fits(
         let mut sorted_key: Vec<i32> = fit.iter().map(|(tid, _)| *tid).collect();
         sorted_key.sort();
         if seen_variants.insert(sorted_key) {
-            let mut variant_modules = Vec::new();
-            for (type_id, flag) in fit {
-                let name = get_type_name(pool, *type_id).await;
-                variant_modules.push(serde_json::json!({
-                    "type_id": type_id,
-                    "name": name,
-                    "flag": flag,
-                }));
-            }
+            let variant_modules: Vec<serde_json::Value> = fit
+                .iter()
+                .map(|(type_id, flag)| {
+                    serde_json::json!({
+                        "type_id": type_id,
+                        "name": resolve_type_name(&type_names, *type_id),
+                        "flag": flag,
+                    })
+                })
+                .collect();
             variants.push(variant_modules);
         }
     }
@@ -956,17 +956,21 @@ async fn compute_trends(
     trends.sort_by(|a, b| b.3.abs().partial_cmp(&a.3.abs()).unwrap_or(std::cmp::Ordering::Equal));
     trends.truncate(20);
 
-    let mut result = Vec::new();
-    for (type_id, current_count, previous_count, change_pct) in trends {
-        let name = get_type_name(pool, type_id).await;
-        result.push(serde_json::json!({
-            "type_id": type_id,
-            "name": name,
-            "current_count": current_count,
-            "previous_count": previous_count,
-            "change_pct": (change_pct * 10.0).round() / 10.0,
-        }));
-    }
+    let trend_type_ids: Vec<i32> = trends.iter().map(|(tid, _, _, _)| *tid).collect();
+    let trend_names = nea_db::get_type_names(pool, &trend_type_ids).await?;
+
+    let result: Vec<serde_json::Value> = trends
+        .iter()
+        .map(|(type_id, current_count, previous_count, change_pct)| {
+            serde_json::json!({
+                "type_id": type_id,
+                "name": resolve_type_name(&trend_names, *type_id),
+                "current_count": current_count,
+                "previous_count": previous_count,
+                "change_pct": (change_pct * 10.0).round() / 10.0,
+            })
+        })
+        .collect();
     Ok(result)
 }
 
@@ -1038,17 +1042,33 @@ async fn compute_fleet_comps(
     ranked.sort_by(|a, b| b.1.cmp(&a.1));
     ranked.truncate(20);
 
-    let mut comps = Vec::new();
-    for (ship_ids, count) in ranked {
-        let mut ships = Vec::new();
-        for type_id in &ship_ids {
-            let name = get_type_name(pool, *type_id).await;
-            ships.push(serde_json::json!({"type_id": type_id, "name": name}));
+    let all_comp_type_ids: Vec<i32> = ranked
+        .iter()
+        .flat_map(|(ids, _)| ids.iter())
+        .copied()
+        .collect();
+    let comp_names = match nea_db::get_type_names(pool, &all_comp_type_ids).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(entity_id, "doctrine_aggregator: fleet comp name resolution failed: {e}");
+            return None;
         }
-        comps.push(serde_json::json!({
-            "ships": ships,
-            "occurrence_count": count,
-        }));
-    }
+    };
+
+    let comps: Vec<serde_json::Value> = ranked
+        .iter()
+        .map(|(ship_ids, count)| {
+            let ships: Vec<serde_json::Value> = ship_ids
+                .iter()
+                .map(|type_id| {
+                    serde_json::json!({"type_id": type_id, "name": resolve_type_name(&comp_names, *type_id)})
+                })
+                .collect();
+            serde_json::json!({
+                "ships": ships,
+                "occurrence_count": count,
+            })
+        })
+        .collect();
     Some(comps)
 }

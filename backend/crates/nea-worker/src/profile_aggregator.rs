@@ -7,7 +7,7 @@ use nea_esi::EsiClient;
 use sqlx::PgPool;
 use tokio::time;
 
-use crate::fitting_utils::{is_fitted_slot, cluster_fittings, get_type_name};
+use crate::fitting_utils::{is_fitted_slot, cluster_fittings, resolve_type_name};
 
 const WORKER_STATE_KEY: &str = "profile_aggregation_last_run";
 
@@ -186,14 +186,19 @@ async fn compute_profile(
     // Solo kills: killmails where this pilot attacked and only 1 non-NPC attacker
     let (solo_kills,): (i64,) = sqlx::query_as(
         r#"
-        SELECT COUNT(*) FROM (
-            SELECT a.killmail_id
+        WITH my_kills AS (
+            SELECT a.killmail_id, a.kill_time
             FROM killmail_attackers a
             WHERE a.character_id = $1
-              AND (SELECT COUNT(*) FROM killmail_attackers a2
-                   WHERE a2.killmail_id = a.killmail_id AND a2.kill_time = a.kill_time
-                     AND a2.character_id IS NOT NULL) = 1
-        ) solo
+        ),
+        attacker_counts AS (
+            SELECT mk.killmail_id,
+                   COUNT(*) FILTER (WHERE a2.character_id IS NOT NULL) AS player_count
+            FROM my_kills mk
+            JOIN killmail_attackers a2 ON a2.killmail_id = mk.killmail_id AND a2.kill_time = mk.kill_time
+            GROUP BY mk.killmail_id, mk.kill_time
+        )
+        SELECT COUNT(*) FROM attacker_counts WHERE player_count = 1
         "#,
     )
     .bind(character_id)
@@ -203,14 +208,19 @@ async fn compute_profile(
     // Solo losses: killmails where this pilot died and only 1 non-NPC attacker
     let (solo_losses,): (i64,) = sqlx::query_as(
         r#"
-        SELECT COUNT(*) FROM (
-            SELECT v.killmail_id
+        WITH my_losses AS (
+            SELECT v.killmail_id, v.kill_time
             FROM killmail_victims v
             WHERE v.character_id = $1
-              AND (SELECT COUNT(*) FROM killmail_attackers a2
-                   WHERE a2.killmail_id = v.killmail_id AND a2.kill_time = v.kill_time
-                     AND a2.character_id IS NOT NULL) = 1
-        ) solo
+        ),
+        attacker_counts AS (
+            SELECT ml.killmail_id,
+                   COUNT(*) FILTER (WHERE a2.character_id IS NOT NULL) AS player_count
+            FROM my_losses ml
+            JOIN killmail_attackers a2 ON a2.killmail_id = ml.killmail_id AND a2.kill_time = ml.kill_time
+            GROUP BY ml.killmail_id, ml.kill_time
+        )
+        SELECT COUNT(*) FROM attacker_counts WHERE player_count = 1
         "#,
     )
     .bind(character_id)
@@ -232,19 +242,6 @@ async fn compute_profile(
     .fetch_all(pool)
     .await?;
 
-    let ships_flown_json: Vec<serde_json::Value> = {
-        let mut result = Vec::new();
-        for (type_id, count) in &top_ships_flown {
-            let name = get_type_name(pool, *type_id).await;
-            result.push(serde_json::json!({
-                "type_id": type_id,
-                "name": name,
-                "count": count,
-            }));
-        }
-        result
-    };
-
     // Top ships lost (as victim)
     let top_ships_lost: Vec<(i32, i64)> = sqlx::query_as(
         r#"
@@ -260,18 +257,35 @@ async fn compute_profile(
     .fetch_all(pool)
     .await?;
 
-    let ships_lost_json: Vec<serde_json::Value> = {
-        let mut result = Vec::new();
-        for (type_id, count) in &top_ships_lost {
-            let name = get_type_name(pool, *type_id).await;
-            result.push(serde_json::json!({
+    // Batch resolve all ship type names
+    let all_ship_ids: Vec<i32> = top_ships_flown
+        .iter()
+        .chain(top_ships_lost.iter())
+        .map(|(id, _)| *id)
+        .collect();
+    let ship_names = nea_db::get_type_names(pool, &all_ship_ids).await?;
+
+    let ships_flown_json: Vec<serde_json::Value> = top_ships_flown
+        .iter()
+        .map(|(type_id, count)| {
+            serde_json::json!({
                 "type_id": type_id,
-                "name": name,
+                "name": resolve_type_name(&ship_names, *type_id),
                 "count": count,
-            }));
-        }
-        result
-    };
+            })
+        })
+        .collect();
+
+    let ships_lost_json: Vec<serde_json::Value> = top_ships_lost
+        .iter()
+        .map(|(type_id, count)| {
+            serde_json::json!({
+                "type_id": type_id,
+                "name": resolve_type_name(&ship_names, *type_id),
+                "count": count,
+            })
+        })
+        .collect();
 
     // Common fittings (from losses only, last 180 days)
     let common_fits = compute_common_fits(pool, character_id).await?;
@@ -352,30 +366,23 @@ async fn compute_common_fits(
         .fetch_all(pool)
         .await?;
 
-        // For each loss, reconstruct the fitting from killmail_items
-        let mut fittings: Vec<Vec<(i32, i32)>> = Vec::new(); // Vec of (type_id, flag) sets
+        // Batch fetch all killmail items for these losses
+        let items_map = nea_db::get_killmail_items_batch(pool, &loss_killmail_ids).await?;
 
-        for (km_id, km_time) in &loss_killmail_ids {
-            let items: Vec<(i32, i32)> = sqlx::query_as(
-                r#"
-                SELECT type_id, flag
-                FROM killmail_items
-                WHERE killmail_id = $1 AND kill_time = $2
-                  AND flag != 0
-                "#,
-            )
-            .bind(km_id)
-            .bind(km_time)
-            .fetch_all(pool)
-            .await?;
+        // Reconstruct fittings from the batch results
+        let mut fittings: Vec<Vec<(i32, i32)>> = Vec::new();
 
-            let fitted: Vec<(i32, i32)> = items
-                .into_iter()
-                .filter(|(_, flag)| is_fitted_slot(*flag))
-                .collect();
+        for (km_id, _km_time) in &loss_killmail_ids {
+            if let Some(items) = items_map.get(km_id) {
+                let fitted: Vec<(i32, i32)> = items
+                    .iter()
+                    .filter(|(_, flag)| is_fitted_slot(*flag))
+                    .cloned()
+                    .collect();
 
-            if !fitted.is_empty() {
-                fittings.push(fitted);
+                if !fitted.is_empty() {
+                    fittings.push(fitted);
+                }
             }
         }
 
@@ -386,24 +393,34 @@ async fn compute_common_fits(
         // Cluster fittings by Jaccard similarity >= 0.8
         let clusters = cluster_fittings(&fittings, 0.8);
 
-        let ship_name = get_type_name(pool, *ship_type_id).await;
+        // Batch resolve all type names (ship + modules)
+        let mut all_type_ids: Vec<i32> = vec![*ship_type_id];
+        for cluster in &clusters {
+            let canonical = &fittings[cluster.canonical_idx];
+            for (type_id, _) in canonical {
+                all_type_ids.push(*type_id);
+            }
+        }
+        all_type_ids.sort_unstable();
+        all_type_ids.dedup();
+        let type_names = nea_db::get_type_names(pool, &all_type_ids).await?;
 
         for cluster in clusters {
-            // Use the most common exact fit as the canonical one
             let canonical = &fittings[cluster.canonical_idx];
-            let mut modules = Vec::new();
-            for (type_id, flag) in canonical {
-                let name = get_type_name(pool, *type_id).await;
-                modules.push(serde_json::json!({
-                    "type_id": type_id,
-                    "name": name,
-                    "flag": flag,
-                }));
-            }
+            let modules: Vec<serde_json::Value> = canonical
+                .iter()
+                .map(|(type_id, flag)| {
+                    serde_json::json!({
+                        "type_id": type_id,
+                        "name": resolve_type_name(&type_names, *type_id),
+                        "flag": flag,
+                    })
+                })
+                .collect();
 
             all_fits.push(serde_json::json!({
                 "ship_type_id": ship_type_id,
-                "ship_name": ship_name,
+                "ship_name": resolve_type_name(&type_names, *ship_type_id),
                 "modules": modules,
                 "count": cluster.count,
                 "variant_count": cluster.variant_count,

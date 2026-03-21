@@ -1,6 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use sqlx::PgPool;
+pub fn resolve_type_name(names: &HashMap<i32, String>, type_id: i32) -> String {
+    names
+        .get(&type_id)
+        .cloned()
+        .unwrap_or_else(|| format!("Type {}", type_id))
+}
 
 /// Fitted slot flag ranges in EVE Online.
 pub const HIGH_SLOT_START: i32 = 27;
@@ -114,9 +119,3 @@ pub fn jaccard_similarity(a: &HashSet<i32>, b: &HashSet<i32>) -> f64 {
     intersection as f64 / union as f64
 }
 
-pub async fn get_type_name(pool: &PgPool, type_id: i32) -> String {
-    match nea_db::get_type(pool, type_id).await {
-        Ok(Some(t)) => t.name,
-        _ => format!("Type {}", type_id),
-    }
-}
