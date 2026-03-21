@@ -4,7 +4,7 @@ use tracing::info;
 
 use crate::error::ApiError;
 use crate::state::AppState;
-use nea_db::{CorrelationResult, DailyDestruction, Mover};
+use nea_db::{CorrelationResult, DailyDestruction, DoctrineProfile, Mover};
 
 #[derive(Serialize)]
 pub struct DashboardResponse {
@@ -16,6 +16,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(dashboard))
         .route("/dashboard/movers", get(movers))
+        .route("/dashboard/doctrines", get(recent_doctrines))
 }
 
 #[tracing::instrument(skip(state))]
@@ -38,5 +39,14 @@ async fn dashboard(State(state): State<AppState>) -> Result<Json<DashboardRespon
 async fn movers(State(state): State<AppState>) -> Result<Json<Vec<Mover>>, ApiError> {
     let rows = nea_db::get_movers(&state.pool, 20).await?;
     info!(movers = rows.len(), "movers");
+    Ok(Json(rows))
+}
+
+#[tracing::instrument(skip(state))]
+async fn recent_doctrines(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<DoctrineProfile>>, ApiError> {
+    let rows = nea_db::get_recent_doctrine_profiles(&state.pool, 8).await?;
+    info!(doctrines = rows.len(), "recent_doctrines");
     Ok(Json(rows))
 }

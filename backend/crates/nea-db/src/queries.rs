@@ -1747,6 +1747,30 @@ pub async fn get_doctrine_profiles(
     Ok(rows)
 }
 
+pub async fn get_recent_doctrine_profiles(
+    pool: &PgPool,
+    limit: i32,
+) -> Result<Vec<DoctrineProfile>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, DoctrineProfile>(
+        r#"
+        SELECT id, entity_type, entity_id, entity_name, window_days, member_count,
+               total_kills, total_losses, ship_usage, doctrines, ship_trends, fleet_comps, computed_at
+        FROM doctrine_profiles
+        WHERE window_days = 90
+          AND doctrines IS NOT NULL
+          AND jsonb_array_length(doctrines) > 0
+        ORDER BY computed_at DESC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    debug!(rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_recent_doctrine_profiles");
+    Ok(rows)
+}
+
 pub async fn get_active_corporation_ids_since(
     pool: &PgPool,
     since: DateTime<Utc>,

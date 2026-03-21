@@ -366,6 +366,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
 	dashboard: () => fetchJson<DashboardData>('/dashboard'),
 	movers: () => fetchJson<Mover[]>('/dashboard/movers'),
+	recentDoctrines: () => fetchJson<DoctrineProfileData[]>('/dashboard/doctrines'),
 	searchItems: (q: string, page = 1) =>
 		fetchJson<SearchResult>(`/items?q=${encodeURIComponent(q)}&page=${page}`),
 	getItem: (typeId: number) => fetchJson<ItemDetail>(`/items/${typeId}`),

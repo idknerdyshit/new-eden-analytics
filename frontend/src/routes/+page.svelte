@@ -1,22 +1,45 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
-	import type { DashboardData, Mover, CorrelationResult, DestructionEntry } from '$lib/api/client';
+	import type { DashboardData, Mover, CorrelationResult, DestructionEntry, DoctrineProfileData, DoctrineGroup } from '$lib/api/client';
 	import { correlationColor, formatCorrelation, formatNumber, formatPrice, changeColor, changeArrow } from '$lib/utils/formatters';
 
 	let dashboard = $state<DashboardData | null>(null);
 	let movers = $state<Mover[]>([]);
+	let recentDoctrines = $state<DoctrineProfileData[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
+	function entityUrl(profile: DoctrineProfileData): string {
+		return profile.entity_type === 'alliance'
+			? `/alliances/${profile.entity_id}`
+			: `/corporations/${profile.entity_id}`;
+	}
+
+	function entityLogo(profile: DoctrineProfileData): string {
+		const kind = profile.entity_type === 'alliance' ? 'alliances' : 'corporations';
+		return `https://images.evetech.net/${kind}/${profile.entity_id}/logo?size=64`;
+	}
+
+	function timeAgo(iso: string): string {
+		const diff = Date.now() - new Date(iso).getTime();
+		const hours = Math.floor(diff / 3_600_000);
+		if (hours < 1) return 'just now';
+		if (hours < 24) return `${hours}h ago`;
+		const days = Math.floor(hours / 24);
+		return `${days}d ago`;
+	}
+
 	onMount(async () => {
 		try {
-			const [dashData, moverData] = await Promise.all([
+			const [dashData, moverData, doctrineData] = await Promise.all([
 				api.dashboard(),
-				api.movers()
+				api.movers(),
+				api.recentDoctrines()
 			]);
 			dashboard = dashData;
 			movers = moverData;
+			recentDoctrines = doctrineData;
 		} catch (e) {
 			console.error('[nea] dashboard load failed', e);
 			error = e instanceof Error ? e.message : 'Failed to load dashboard';
@@ -41,6 +64,12 @@
 				<div class="mb-4 h-6 w-48 animate-pulse rounded bg-[var(--color-bg-tertiary)]"></div>
 				{#each Array(5) as _}
 					<div class="mb-3 h-10 animate-pulse rounded bg-[var(--color-bg-tertiary)]"></div>
+				{/each}
+			</div>
+			<!-- Skeleton for doctrines -->
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+				{#each Array(8) as _}
+					<div class="h-36 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]"></div>
 				{/each}
 			</div>
 			<!-- Skeleton for cards -->
@@ -104,6 +133,67 @@
 			{:else}
 				<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-8 text-center text-[var(--color-text-secondary)]">
 					No correlation data available yet.
+				</div>
+			{/if}
+		</section>
+
+		<!-- Recent Doctrines -->
+		<section>
+			<h2 class="mb-4 text-lg font-semibold">Recent Doctrines</h2>
+			{#if recentDoctrines.length > 0}
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+					{#each recentDoctrines as profile}
+						{@const firstDoctrine = (profile.doctrines && profile.doctrines.length > 0) ? profile.doctrines[0] : null}
+						<a
+							href={entityUrl(profile)}
+							class="group rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 no-underline transition-colors hover:border-[var(--color-accent-blue)] hover:no-underline"
+						>
+							<div class="mb-3 flex items-center gap-2">
+								<img
+									src={entityLogo(profile)}
+									alt={profile.entity_name}
+									class="h-8 w-8 rounded"
+								/>
+								<div class="min-w-0 flex-1">
+									<div class="truncate text-sm font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent-blue)]">
+										{profile.entity_name}
+									</div>
+									<div class="text-xs text-[var(--color-text-secondary)]">
+										{profile.entity_type === 'alliance' ? 'Alliance' : 'Corp'} &middot; {timeAgo(profile.computed_at)}
+									</div>
+								</div>
+							</div>
+							{#if firstDoctrine}
+								<div class="flex flex-wrap items-center gap-1.5">
+									{#each firstDoctrine.ships.slice(0, 4) as ship, i}
+										<div class="flex items-center gap-1" title={ship.ship_name}>
+											<img
+												src="https://images.evetech.net/types/{ship.ship_type_id}/icon?size=32"
+												alt={ship.ship_name}
+												class="h-5 w-5"
+											/>
+											<span class="text-xs text-[var(--color-text-secondary)]">{ship.ship_name}</span>
+										</div>
+										{#if i < Math.min(firstDoctrine.ships.length, 4) - 1}
+											<span class="text-xs text-[var(--color-text-secondary)]">+</span>
+										{/if}
+									{/each}
+									{#if firstDoctrine.ships.length > 4}
+										<span class="text-xs text-[var(--color-text-secondary)]">+{firstDoctrine.ships.length - 4} more</span>
+									{/if}
+								</div>
+							{/if}
+							{#if profile.doctrines && profile.doctrines.length > 1}
+								<div class="mt-2 text-xs text-[var(--color-text-secondary)]">
+									{profile.doctrines.length} doctrine{profile.doctrines.length !== 1 ? 's' : ''} detected
+								</div>
+							{/if}
+						</a>
+					{/each}
+				</div>
+			{:else}
+				<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-8 text-center text-[var(--color-text-secondary)]">
+					No doctrine data available yet.
 				</div>
 			{/if}
 		</section>
