@@ -12,7 +12,14 @@ use crate::fitting_utils::{cluster_fittings, get_type_name, is_fitted_slot};
 
 const WORKER_STATE_KEY: &str = "doctrine_aggregation_last_run";
 const WINDOWS: &[i32] = &[7, 30, 90];
-const MIN_KILLS_FOR_PROFILE: i64 = 25;
+const DEFAULT_MIN_KILLS_FOR_PROFILE: i64 = 15;
+
+fn min_kills_for_profile() -> i64 {
+    std::env::var("DOCTRINE_MIN_KILLS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MIN_KILLS_FOR_PROFILE)
+}
 
 pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
     tracing::info!("doctrine_aggregator task started");
@@ -59,7 +66,7 @@ pub async fn run_cycle(
     for &corp_id in &corp_ids {
         // Check 30d kill count to filter low-activity corps
         let kill_count = get_entity_kill_count(pool, "corporation", corp_id, 30).await?;
-        if kill_count < MIN_KILLS_FOR_PROFILE {
+        if kill_count < min_kills_for_profile() {
             continue;
         }
 
@@ -86,7 +93,7 @@ pub async fn run_cycle(
     // Step 3b: Compute profiles for alliances
     for &alliance_id in &alliance_ids {
         let kill_count = get_entity_kill_count(pool, "alliance", alliance_id, 30).await?;
-        if kill_count < MIN_KILLS_FOR_PROFILE {
+        if kill_count < min_kills_for_profile() {
             continue;
         }
 
@@ -1026,7 +1033,7 @@ async fn compute_fleet_comps(
     // Filter to >=5 occurrences, take top 20
     let mut ranked: Vec<(Vec<i32>, u64)> = comp_counts
         .into_iter()
-        .filter(|(_, count)| *count >= 5)
+        .filter(|(_, count)| *count >= 2)
         .collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1));
     ranked.truncate(20);
