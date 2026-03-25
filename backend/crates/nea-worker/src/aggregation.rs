@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use nea_db::DailyDestruction;
 use sqlx::PgPool;
 use tokio::time;
 
@@ -26,29 +25,48 @@ pub async fn run(pool: PgPool) {
 async fn aggregate_destruction(
     pool: &PgPool,
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-    let rows = sqlx::query_as::<_, DailyDestruction>(
+    let result = sqlx::query(
         r#"
-        SELECT combined.type_id, st.name AS type_name, kill_time::date as date,
-               SUM(quantity_destroyed)::bigint as quantity_destroyed,
-               COUNT(DISTINCT killmail_id)::int as kill_count
-        FROM (
-            SELECT ki.killmail_id, ki.kill_time, ki.type_id, ki.quantity_destroyed
+        WITH item_rows AS (
+            SELECT ki.killmail_id,
+                   ki.kill_time::date AS date,
+                   ki.type_id,
+                   SUM(ki.quantity_destroyed)::bigint AS quantity_destroyed
             FROM killmail_items ki
+            JOIN sde_types st ON st.type_id = ki.type_id
             WHERE ki.kill_time >= NOW() - INTERVAL '7 days'
-            UNION ALL
-            SELECT kv.killmail_id, kv.kill_time, kv.ship_type_id as type_id, 1::bigint as quantity_destroyed
+              AND st.group_id != 29
+            GROUP BY ki.killmail_id, ki.kill_time::date, ki.type_id
+        ),
+        victim_rows AS (
+            SELECT kv.killmail_id,
+                   kv.kill_time::date AS date,
+                   kv.ship_type_id AS type_id,
+                   1::bigint AS quantity_destroyed
             FROM killmail_victims kv
+            JOIN sde_types st ON st.type_id = kv.ship_type_id
             WHERE kv.kill_time >= NOW() - INTERVAL '7 days'
-        ) combined
-        JOIN sde_types st ON st.type_id = combined.type_id
-        WHERE st.group_id != 29
-        GROUP BY combined.type_id, st.name, kill_time::date
+              AND st.group_id != 29
+        ),
+        combined AS (
+            SELECT * FROM item_rows
+            UNION ALL
+            SELECT * FROM victim_rows
+        )
+        INSERT INTO daily_destruction (type_id, date, quantity_destroyed, kill_count)
+        SELECT combined.type_id,
+               combined.date,
+               SUM(combined.quantity_destroyed)::bigint AS quantity_destroyed,
+               COUNT(DISTINCT combined.killmail_id)::int AS kill_count
+        FROM combined
+        GROUP BY combined.type_id, combined.date
+        ON CONFLICT (type_id, date) DO UPDATE
+        SET quantity_destroyed = EXCLUDED.quantity_destroyed,
+            kill_count = EXCLUDED.kill_count
         "#,
     )
-    .fetch_all(pool)
+    .execute(pool)
     .await?;
 
-    let count = rows.len() as u64;
-    nea_db::upsert_daily_destruction(pool, &rows).await?;
-    Ok(count)
+    Ok(result.rows_affected())
 }
