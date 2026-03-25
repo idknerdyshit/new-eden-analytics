@@ -105,12 +105,7 @@ pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
             }
         }
 
-        tracing::info!(
-            fetched,
-            inserted,
-            errors,
-            "market_history: cycle complete"
-        );
+        tracing::info!(fetched, inserted, errors, "market_history: cycle complete");
     }
 }
 
@@ -120,7 +115,14 @@ mod tests {
     use chrono::NaiveDate;
     use nea_esi::EsiMarketHistoryEntry;
 
-    fn entry(date: NaiveDate, avg: f64, high: f64, low: f64, vol: i64, orders: i64) -> EsiMarketHistoryEntry {
+    fn entry(
+        date: NaiveDate,
+        avg: f64,
+        high: f64,
+        low: f64,
+        vol: i64,
+        orders: i64,
+    ) -> EsiMarketHistoryEntry {
         EsiMarketHistoryEntry {
             date,
             average: avg,
@@ -158,9 +160,15 @@ async fn fetch_and_store(
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
     let entries = match esi.market_history(THE_FORGE, type_id).await {
         Ok(e) => e,
-        Err(EsiError::Api { status: 400, ref message }) if message.contains("not tradable") => {
+        Err(EsiError::Api {
+            status: 400,
+            ref message,
+        }) if message.contains("not tradable") => {
             nea_db::mark_type_non_tradable(pool, type_id).await?;
-            tracing::info!(type_id, "marked type as non-tradable, will skip in future cycles");
+            tracing::info!(
+                type_id,
+                "marked type as non-tradable, will skip in future cycles"
+            );
             return Ok(0);
         }
         Err(e) => return Err(e.into()),

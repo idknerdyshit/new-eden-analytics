@@ -1,15 +1,15 @@
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{Json, Router, extract::State, routing::get};
 use serde::Serialize;
 use tracing::info;
 
 use crate::error::ApiError;
 use crate::state::AppState;
-use nea_db::{CorrelationResult, DailyDestruction, DoctrineProfile, Mover};
+use nea_db::{CorrelationResult, DoctrineProfile, Mover, TrendingDestruction};
 
 #[derive(Serialize)]
 pub struct DashboardResponse {
     pub top_correlations: Vec<CorrelationResult>,
-    pub top_destruction: Vec<DailyDestruction>,
+    pub top_destruction: Vec<TrendingDestruction>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -22,7 +22,7 @@ pub fn routes() -> Router<AppState> {
 #[tracing::instrument(skip(state))]
 async fn dashboard(State(state): State<AppState>) -> Result<Json<DashboardResponse>, ApiError> {
     let top_correlations = nea_db::get_top_correlations(&state.pool, 10).await?;
-    let top_destruction = nea_db::get_top_destruction(&state.pool, 7, 10).await?;
+    let top_destruction = nea_db::get_trending_destruction(&state.pool, 7, 10).await?;
 
     info!(
         correlations = top_correlations.len(),

@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
@@ -50,7 +50,10 @@ pub fn routes() -> Router<AppState> {
         .route("/corporations/search", get(search_corporations))
         .route("/corporations/{corp_id}", get(get_corporation))
         .route("/corporations/{corp_id}/kills", get(get_corporation_kills))
-        .route("/corporations/{corp_id}/losses", get(get_corporation_losses))
+        .route(
+            "/corporations/{corp_id}/losses",
+            get(get_corporation_losses),
+        )
 }
 
 #[tracing::instrument(skip(state, params))]
@@ -119,8 +122,19 @@ async fn get_corporation_kills(
         nea_db::count_corporation_kills(&state.pool, corp_id),
     )?;
 
-    debug!(corp_id, kills = killmails.len(), total, page, "get_corporation_kills");
-    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
+    debug!(
+        corp_id,
+        kills = killmails.len(),
+        total,
+        page,
+        "get_corporation_kills"
+    );
+    Ok(Json(PaginatedKillmails {
+        killmails,
+        page,
+        per_page,
+        total,
+    }))
 }
 
 #[tracing::instrument(skip(state, params))]
@@ -138,6 +152,17 @@ async fn get_corporation_losses(
         nea_db::count_corporation_losses(&state.pool, corp_id),
     )?;
 
-    debug!(corp_id, losses = killmails.len(), total, page, "get_corporation_losses");
-    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
+    debug!(
+        corp_id,
+        losses = killmails.len(),
+        total,
+        page,
+        "get_corporation_losses"
+    );
+    Ok(Json(PaginatedKillmails {
+        killmails,
+        page,
+        per_page,
+        total,
+    }))
 }

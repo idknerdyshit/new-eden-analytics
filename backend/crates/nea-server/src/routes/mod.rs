@@ -9,16 +9,16 @@ pub mod items;
 pub mod killmails;
 pub mod market;
 
+use axum::http::{HeaderValue, Method};
 use axum::{
+    Json, Router,
     extract::{Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use serde_json::json;
-use axum::http::{HeaderValue, Method};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{Instrument, Level};
@@ -50,7 +50,10 @@ async fn security_headers_middleware(
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
 
-    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
     headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
     headers.insert(
         "referrer-policy",

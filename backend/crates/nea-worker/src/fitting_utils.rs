@@ -118,4 +118,3 @@ pub fn jaccard_similarity(a: &HashSet<i32>, b: &HashSet<i32>) -> f64 {
     }
     intersection as f64 / union as f64
 }
-

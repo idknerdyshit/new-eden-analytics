@@ -17,11 +17,14 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool, DbError> {
 /// Run pending sqlx migrations from the `migrations/` directory embedded at compile time.
 pub async fn run_migrations(pool: &PgPool) -> Result<(), DbError> {
     info!("running database migrations");
-    sqlx::migrate!("./migrations").run(pool).await.map_err(|e| {
-        DbError::Sqlx(sqlx::Error::Configuration(
-            format!("migration error: {e}").into(),
-        ))
-    })?;
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .map_err(|e| {
+            DbError::Sqlx(sqlx::Error::Configuration(
+                format!("migration error: {e}").into(),
+            ))
+        })?;
     info!("database migrations complete");
     Ok(())
 }

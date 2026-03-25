@@ -1,8 +1,8 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 use serde::Deserialize;
 use std::sync::atomic::Ordering;
@@ -66,8 +66,7 @@ async fn run_analysis(
     let running = state.analysis_running.clone();
 
     tokio::spawn(async move {
-        let result =
-            nea_analysis::runner::run_analysis(&pool, nea_esi::THE_FORGE).await;
+        let result = nea_analysis::runner::run_analysis(&pool, nea_esi::THE_FORGE).await;
         running.store(false, Ordering::SeqCst);
 
         match result {
@@ -91,9 +90,7 @@ async fn run_analysis(
 }
 
 #[tracing::instrument(skip(state))]
-async fn analysis_status(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+async fn analysis_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     let running = state.analysis_running.load(Ordering::SeqCst);
     Json(serde_json::json!({"running": running}))
 }

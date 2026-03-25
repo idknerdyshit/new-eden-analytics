@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
@@ -50,7 +50,10 @@ pub fn routes() -> Router<AppState> {
         .route("/characters/search", get(search_characters))
         .route("/characters/{character_id}", get(get_character))
         .route("/characters/{character_id}/kills", get(get_character_kills))
-        .route("/characters/{character_id}/losses", get(get_character_losses))
+        .route(
+            "/characters/{character_id}/losses",
+            get(get_character_losses),
+        )
 }
 
 #[tracing::instrument(skip(state, params))]
@@ -97,7 +100,11 @@ async fn get_character(
 
     let profile = nea_db::get_character_profile(&state.pool, character_id).await?;
 
-    debug!(character_id, has_profile = profile.is_some(), "get_character");
+    debug!(
+        character_id,
+        has_profile = profile.is_some(),
+        "get_character"
+    );
     Ok(Json(CharacterDetail { character, profile }))
 }
 
@@ -116,8 +123,19 @@ async fn get_character_kills(
         nea_db::count_character_kills(&state.pool, character_id),
     )?;
 
-    debug!(character_id, kills = killmails.len(), total, page, "get_character_kills");
-    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
+    debug!(
+        character_id,
+        kills = killmails.len(),
+        total,
+        page,
+        "get_character_kills"
+    );
+    Ok(Json(PaginatedKillmails {
+        killmails,
+        page,
+        per_page,
+        total,
+    }))
 }
 
 #[tracing::instrument(skip(state, params))]
@@ -135,6 +153,17 @@ async fn get_character_losses(
         nea_db::count_character_losses(&state.pool, character_id),
     )?;
 
-    debug!(character_id, losses = killmails.len(), total, page, "get_character_losses");
-    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
+    debug!(
+        character_id,
+        losses = killmails.len(),
+        total,
+        page,
+        "get_character_losses"
+    );
+    Ok(Json(PaginatedKillmails {
+        killmails,
+        page,
+        per_page,
+        total,
+    }))
 }

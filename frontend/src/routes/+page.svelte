@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
-	import type { DashboardData, Mover, CorrelationResult, DestructionEntry, DoctrineProfileData, DoctrineGroup } from '$lib/api/client';
+	import type { DashboardData, Mover, CorrelationResult, TrendingDestruction, DoctrineProfileData, DoctrineGroup } from '$lib/api/client';
 	import { correlationColor, formatCorrelation, formatNumber, formatPrice, changeColor, changeArrow } from '$lib/utils/formatters';
 
 	let dashboard = $state<DashboardData | null>(null);
@@ -200,7 +200,7 @@
 
 		<!-- Trending Destruction -->
 		<section>
-			<h2 class="mb-4 text-lg font-semibold">Trending Destruction</h2>
+			<h2 class="mb-4 text-lg font-semibold">Trending Destruction <span class="text-sm font-normal text-[var(--color-text-secondary)]">(last 7 days)</span></h2>
 			{#if dashboard && dashboard.top_destruction.length > 0}
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 					{#each dashboard.top_destruction as entry}
@@ -208,12 +208,19 @@
 							href="/items/{entry.type_id}"
 							class="group rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 no-underline transition-colors hover:border-[var(--color-accent-blue)] hover:no-underline"
 						>
-							<div class="mb-2 text-sm font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent-blue)]">
-								{entry.type_name ?? `Type ${entry.type_id}`}
+							<div class="mb-2 flex items-center gap-2">
+								<img
+									src="https://images.evetech.net/types/{entry.type_id}/icon?size=32"
+									alt={entry.type_name ?? `Type ${entry.type_id}`}
+									class="h-6 w-6"
+								/>
+								<span class="text-sm font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent-blue)]">
+									{entry.type_name ?? `Type ${entry.type_id}`}
+								</span>
 							</div>
 							<div class="flex items-end justify-between">
 								<div>
-									<div class="text-xs text-[var(--color-text-secondary)]">Units Destroyed</div>
+									<div class="text-xs text-[var(--color-text-secondary)]">Total Destroyed</div>
 									<div class="text-lg font-bold text-[var(--color-accent-red)]">
 										{formatNumber(entry.quantity_destroyed)}
 									</div>
@@ -224,9 +231,6 @@
 										{formatNumber(entry.kill_count)}
 									</div>
 								</div>
-							</div>
-							<div class="mt-2 text-xs text-[var(--color-text-secondary)]">
-								{entry.date}
 							</div>
 						</a>
 					{/each}

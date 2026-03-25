@@ -16,11 +16,16 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
     let mut sequence_id = match nea_db::get_worker_state(&pool, WORKER_STATE_KEY).await {
         Ok(Some(val)) => match val.parse::<i64>() {
             Ok(id) => {
-                tracing::info!(sequence_id = id, "killmail_poller: resuming from saved sequence");
+                tracing::info!(
+                    sequence_id = id,
+                    "killmail_poller: resuming from saved sequence"
+                );
                 id
             }
             Err(e) => {
-                tracing::warn!("killmail_poller: failed to parse saved sequence '{val}': {e}, fetching current from R2Z2");
+                tracing::warn!(
+                    "killmail_poller: failed to parse saved sequence '{val}': {e}, fetching current from R2Z2"
+                );
                 fetch_starting_sequence(&r2z2).await
             }
         },
@@ -29,7 +34,9 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
             fetch_starting_sequence(&r2z2).await
         }
         Err(e) => {
-            tracing::error!("killmail_poller: failed to read worker_state: {e}, fetching current from R2Z2");
+            tracing::error!(
+                "killmail_poller: failed to read worker_state: {e}, fetching current from R2Z2"
+            );
             fetch_starting_sequence(&r2z2).await
         }
     };
@@ -143,12 +150,9 @@ pub async fn run(pool: PgPool, r2z2: Arc<R2z2Client>) {
                 }
 
                 // Save sequence to worker_state
-                if let Err(e) = nea_db::set_worker_state(
-                    &pool,
-                    WORKER_STATE_KEY,
-                    &sequence_id.to_string(),
-                )
-                .await
+                if let Err(e) =
+                    nea_db::set_worker_state(&pool, WORKER_STATE_KEY, &sequence_id.to_string())
+                        .await
                 {
                     tracing::warn!(
                         sequence_id,
@@ -207,4 +211,3 @@ async fn fetch_starting_sequence(r2z2: &R2z2Client) -> i64 {
         }
     }
 }
-

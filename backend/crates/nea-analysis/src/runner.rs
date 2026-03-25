@@ -26,7 +26,15 @@ pub async fn run_analysis(
     let mut significant = 0u64;
 
     for (product_type_id, material_type_id) in &pairs {
-        match analyze_pair(pool, *product_type_id, *material_type_id, region_id, start, end).await
+        match analyze_pair(
+            pool,
+            *product_type_id,
+            *material_type_id,
+            region_id,
+            start,
+            end,
+        )
+        .await
         {
             Ok(Some(is_significant)) => {
                 analyzed += 1;

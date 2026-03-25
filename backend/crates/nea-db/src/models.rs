@@ -144,6 +144,15 @@ pub struct DailyDestruction {
     pub kill_count: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TrendingDestruction {
+    pub type_id: i32,
+    #[serde(default)]
+    pub type_name: Option<String>,
+    pub quantity_destroyed: i64,
+    pub kill_count: i64,
+}
+
 // ── Dashboard ──
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

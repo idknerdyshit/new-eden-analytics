@@ -8,7 +8,7 @@ use nea_esi::EsiClient;
 use sqlx::PgPool;
 use tokio::time;
 
-use crate::fitting_utils::{cluster_fittings, resolve_type_name, is_fitted_slot};
+use crate::fitting_utils::{cluster_fittings, is_fitted_slot, resolve_type_name};
 
 const WORKER_STATE_KEY: &str = "doctrine_aggregation_last_run";
 const WINDOWS: &[i32] = &[7, 30, 90];
@@ -71,20 +71,40 @@ pub async fn run_cycle(
         }
 
         let corp = nea_db::get_corporation(pool, corp_id).await?;
-        let entity_name = corp.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| format!("Corp {}", corp_id));
+        let entity_name = corp
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| format!("Corp {}", corp_id));
         let member_count = corp.and_then(|c| c.member_count).unwrap_or(0);
 
         for &window in WINDOWS {
-            match compute_doctrine_profile(pool, "corporation", corp_id, &entity_name, member_count, window).await {
+            match compute_doctrine_profile(
+                pool,
+                "corporation",
+                corp_id,
+                &entity_name,
+                member_count,
+                window,
+            )
+            .await
+            {
                 Ok(profile) => {
                     if let Err(e) = nea_db::upsert_doctrine_profile(pool, &profile).await {
-                        tracing::warn!(corp_id, window, "doctrine_aggregator: failed to upsert profile: {e}");
+                        tracing::warn!(
+                            corp_id,
+                            window,
+                            "doctrine_aggregator: failed to upsert profile: {e}"
+                        );
                     } else {
                         computed += 1;
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(corp_id, window, "doctrine_aggregator: failed to compute profile: {e}");
+                    tracing::warn!(
+                        corp_id,
+                        window,
+                        "doctrine_aggregator: failed to compute profile: {e}"
+                    );
                 }
             }
         }
@@ -103,16 +123,26 @@ pub async fn run_cycle(
             .unwrap_or_else(|| format!("Alliance {}", alliance_id));
 
         for &window in WINDOWS {
-            match compute_doctrine_profile(pool, "alliance", alliance_id, &entity_name, 0, window).await {
+            match compute_doctrine_profile(pool, "alliance", alliance_id, &entity_name, 0, window)
+                .await
+            {
                 Ok(profile) => {
                     if let Err(e) = nea_db::upsert_doctrine_profile(pool, &profile).await {
-                        tracing::warn!(alliance_id, window, "doctrine_aggregator: failed to upsert profile: {e}");
+                        tracing::warn!(
+                            alliance_id,
+                            window,
+                            "doctrine_aggregator: failed to upsert profile: {e}"
+                        );
                     } else {
                         computed += 1;
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(alliance_id, window, "doctrine_aggregator: failed to compute profile: {e}");
+                    tracing::warn!(
+                        alliance_id,
+                        window,
+                        "doctrine_aggregator: failed to compute profile: {e}"
+                    );
                 }
             }
         }
@@ -138,7 +168,10 @@ async fn resolve_corporation_names(pool: &PgPool, esi: &EsiClient) {
         return;
     }
 
-    tracing::info!(count = uncached.len(), "doctrine_aggregator: resolving corporation names");
+    tracing::info!(
+        count = uncached.len(),
+        "doctrine_aggregator: resolving corporation names"
+    );
 
     let mut resolved = 0u64;
     for corp_id in uncached {
@@ -152,13 +185,19 @@ async fn resolve_corporation_names(pool: &PgPool, esi: &EsiClient) {
                     fetched_at: Utc::now(),
                 };
                 if let Err(e) = nea_db::upsert_corporation(pool, &corp).await {
-                    tracing::warn!(corp_id, "doctrine_aggregator: failed to cache corporation: {e}");
+                    tracing::warn!(
+                        corp_id,
+                        "doctrine_aggregator: failed to cache corporation: {e}"
+                    );
                 } else {
                     resolved += 1;
                 }
             }
             Err(nea_esi::EsiError::Api { status: 404, .. }) => {
-                tracing::debug!(corp_id, "doctrine_aggregator: corporation not found on ESI (404), caching placeholder");
+                tracing::debug!(
+                    corp_id,
+                    "doctrine_aggregator: corporation not found on ESI (404), caching placeholder"
+                );
                 let placeholder = nea_db::Corporation {
                     corporation_id: corp_id,
                     name: format!("Unknown Corp {}", corp_id),
@@ -169,13 +208,19 @@ async fn resolve_corporation_names(pool: &PgPool, esi: &EsiClient) {
                 let _ = nea_db::upsert_corporation(pool, &placeholder).await;
             }
             Err(e) => {
-                tracing::debug!(corp_id, "doctrine_aggregator: failed to fetch corporation from ESI: {e}");
+                tracing::debug!(
+                    corp_id,
+                    "doctrine_aggregator: failed to fetch corporation from ESI: {e}"
+                );
             }
         }
         tokio::time::sleep(Duration::from_millis(70)).await;
     }
 
-    tracing::info!(resolved, "doctrine_aggregator: corporation name resolution complete");
+    tracing::info!(
+        resolved,
+        "doctrine_aggregator: corporation name resolution complete"
+    );
 }
 
 async fn resolve_alliance_names(pool: &PgPool, esi: &EsiClient) {
@@ -191,7 +236,10 @@ async fn resolve_alliance_names(pool: &PgPool, esi: &EsiClient) {
         return;
     }
 
-    tracing::info!(count = uncached.len(), "doctrine_aggregator: resolving alliance names");
+    tracing::info!(
+        count = uncached.len(),
+        "doctrine_aggregator: resolving alliance names"
+    );
 
     let mut resolved = 0u64;
     for alliance_id in uncached {
@@ -204,13 +252,19 @@ async fn resolve_alliance_names(pool: &PgPool, esi: &EsiClient) {
                     fetched_at: Utc::now(),
                 };
                 if let Err(e) = nea_db::upsert_alliance(pool, &alliance).await {
-                    tracing::warn!(alliance_id, "doctrine_aggregator: failed to cache alliance: {e}");
+                    tracing::warn!(
+                        alliance_id,
+                        "doctrine_aggregator: failed to cache alliance: {e}"
+                    );
                 } else {
                     resolved += 1;
                 }
             }
             Err(nea_esi::EsiError::Api { status: 404, .. }) => {
-                tracing::debug!(alliance_id, "doctrine_aggregator: alliance not found on ESI (404), caching placeholder");
+                tracing::debug!(
+                    alliance_id,
+                    "doctrine_aggregator: alliance not found on ESI (404), caching placeholder"
+                );
                 let placeholder = nea_db::Alliance {
                     alliance_id,
                     name: format!("Unknown Alliance {}", alliance_id),
@@ -220,13 +274,19 @@ async fn resolve_alliance_names(pool: &PgPool, esi: &EsiClient) {
                 let _ = nea_db::upsert_alliance(pool, &placeholder).await;
             }
             Err(e) => {
-                tracing::debug!(alliance_id, "doctrine_aggregator: failed to fetch alliance from ESI: {e}");
+                tracing::debug!(
+                    alliance_id,
+                    "doctrine_aggregator: failed to fetch alliance from ESI: {e}"
+                );
             }
         }
         tokio::time::sleep(Duration::from_millis(70)).await;
     }
 
-    tracing::info!(resolved, "doctrine_aggregator: alliance name resolution complete");
+    tracing::info!(
+        resolved,
+        "doctrine_aggregator: alliance name resolution complete"
+    );
 }
 
 async fn get_entity_kill_count(
@@ -363,10 +423,7 @@ async fn compute_ship_usage(
 
 /// EVE Online group names for ships that typically don't deal damage and
 /// won't appear as attackers on killmails.
-const SUPPORT_GROUP_NAMES: &[&str] = &[
-    "Logistics",
-    "Logistics Frigate",
-];
+const SUPPORT_GROUP_NAMES: &[&str] = &["Logistics", "Logistics Frigate"];
 
 /// Per-ship fitting data extracted from loss killmails.
 struct ShipFitData {
@@ -439,9 +496,12 @@ async fn compute_doctrines(
     }
 
     // Sort kills by (system, time) then merge into engagements
-    let mut kills_sorted: Vec<(i64, &KillInfo)> = kill_map.iter().map(|(id, info)| (*id, info)).collect();
+    let mut kills_sorted: Vec<(i64, &KillInfo)> =
+        kill_map.iter().map(|(id, info)| (*id, info)).collect();
     kills_sorted.sort_by(|a, b| {
-        a.1.system_id.cmp(&b.1.system_id).then(a.1.time.cmp(&b.1.time))
+        a.1.system_id
+            .cmp(&b.1.system_id)
+            .then(a.1.time.cmp(&b.1.time))
     });
 
     let engagement_window = chrono::Duration::minutes(15);
@@ -449,11 +509,17 @@ async fn compute_doctrines(
 
     for (km_id, info) in &kills_sorted {
         let merged = engagements.last_mut().and_then(|eng| {
-            if eng.system_id == info.system_id && (info.time - eng.kill_ids.iter()
-                .filter_map(|id| kill_map.get(id))
-                .map(|k| k.time)
-                .max()
-                .unwrap_or(info.time)).abs() <= engagement_window
+            if eng.system_id == info.system_id
+                && (info.time
+                    - eng
+                        .kill_ids
+                        .iter()
+                        .filter_map(|id| kill_map.get(id))
+                        .map(|k| k.time)
+                        .max()
+                        .unwrap_or(info.time))
+                .abs()
+                    <= engagement_window
             {
                 Some(eng)
             } else {
@@ -498,7 +564,11 @@ async fn compute_doctrines(
 
     // Sort indices by pilot_count descending for seed selection
     let mut indices: Vec<usize> = (0..engagements.len()).collect();
-    indices.sort_by(|a, b| engagements[*b].pilot_count.cmp(&engagements[*a].pilot_count));
+    indices.sort_by(|a, b| {
+        engagements[*b]
+            .pilot_count
+            .cmp(&engagements[*a].pilot_count)
+    });
 
     for &seed_idx in &indices {
         if assigned[seed_idx] {
@@ -589,7 +659,9 @@ async fn compute_doctrines(
 
     let mut fit_data: HashMap<i32, ShipFitData> = HashMap::new();
     for &ship_type_id in &all_doctrine_ship_ids {
-        if let Some(data) = compute_ship_fits(pool, column, entity_id, window_days, ship_type_id).await? {
+        if let Some(data) =
+            compute_ship_fits(pool, column, entity_id, window_days, ship_type_id).await?
+        {
             fit_data.insert(ship_type_id, data);
         }
     }
@@ -642,7 +714,11 @@ fn jaccard_i32(a: &HashSet<i32>, b: &HashSet<i32>) -> f64 {
     }
     let intersection = a.intersection(b).count();
     let union = a.union(b).count();
-    if union == 0 { 0.0 } else { intersection as f64 / union as f64 }
+    if union == 0 {
+        0.0
+    } else {
+        intersection as f64 / union as f64
+    }
 }
 
 /// Compute fitting clusters for a single ship type from entity's loss killmails.
@@ -679,10 +755,8 @@ async fn compute_ship_fits(
     let pilot_ids: HashSet<Option<i64>> = loss_killmails.iter().map(|(_, _, cid)| *cid).collect();
 
     // Batch fetch all killmail items (Issue 2: no per-killmail fetch)
-    let km_keys: Vec<(i64, chrono::DateTime<Utc>)> = loss_killmails
-        .iter()
-        .map(|(id, t, _)| (*id, *t))
-        .collect();
+    let km_keys: Vec<(i64, chrono::DateTime<Utc>)> =
+        loss_killmails.iter().map(|(id, t, _)| (*id, *t)).collect();
     let items_map = nea_db::get_killmail_items_batch(pool, &km_keys).await?;
 
     let mut fittings: Vec<Vec<(i32, i32)>> = Vec::new();
@@ -706,7 +780,10 @@ async fn compute_ship_fits(
     let clusters = cluster_fittings(&fittings, 0.7);
 
     // Take the largest cluster that qualifies
-    let best = clusters.into_iter().filter(|c| c.count >= 3).max_by_key(|c| c.count);
+    let best = clusters
+        .into_iter()
+        .filter(|c| c.count >= 3)
+        .max_by_key(|c| c.count);
 
     let Some(cluster) = best else {
         return Ok(None);
@@ -808,7 +885,10 @@ async fn detect_support_ships(
     {
         Ok(rows) => rows,
         Err(e) => {
-            tracing::warn!(entity_id, "doctrine_aggregator: support ship kill events query failed: {e}");
+            tracing::warn!(
+                entity_id,
+                "doctrine_aggregator: support ship kill events query failed: {e}"
+            );
             return Vec::new();
         }
     };
@@ -841,7 +921,10 @@ async fn detect_support_ships(
     {
         Ok(rows) => rows,
         Err(e) => {
-            tracing::warn!(entity_id, "doctrine_aggregator: support ship loss events query failed: {e}");
+            tracing::warn!(
+                entity_id,
+                "doctrine_aggregator: support ship loss events query failed: {e}"
+            );
             return Vec::new();
         }
     };
@@ -871,10 +954,7 @@ async fn detect_support_ships(
                 .collect();
 
             if !nearby.is_empty() {
-                support_map
-                    .entry(*ship_type_id)
-                    .or_default()
-                    .extend(nearby);
+                support_map.entry(*ship_type_id).or_default().extend(nearby);
             }
         }
     }
@@ -953,7 +1033,11 @@ async fn compute_trends(
     }
 
     // Sort by abs(change_pct) desc, take top 20
-    trends.sort_by(|a, b| b.3.abs().partial_cmp(&a.3.abs()).unwrap_or(std::cmp::Ordering::Equal));
+    trends.sort_by(|a, b| {
+        b.3.abs()
+            .partial_cmp(&a.3.abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     trends.truncate(20);
 
     let trend_type_ids: Vec<i32> = trends.iter().map(|(tid, _, _, _)| *tid).collect();
@@ -1005,11 +1089,17 @@ async fn compute_fleet_comps(
     let rows = match result {
         Ok(Ok(rows)) => rows,
         Ok(Err(e)) => {
-            tracing::warn!(entity_id, "doctrine_aggregator: fleet comp query failed: {e}");
+            tracing::warn!(
+                entity_id,
+                "doctrine_aggregator: fleet comp query failed: {e}"
+            );
             return None;
         }
         Err(_) => {
-            tracing::warn!(entity_id, "doctrine_aggregator: fleet comp query timed out (>15s), skipping");
+            tracing::warn!(
+                entity_id,
+                "doctrine_aggregator: fleet comp query timed out (>15s), skipping"
+            );
             return None;
         }
     };
@@ -1026,7 +1116,12 @@ async fn compute_fleet_comps(
     // Count occurrences of each sorted ship-type set (only kills with 2+ distinct types)
     let mut comp_counts: HashMap<Vec<i32>, u64> = HashMap::new();
     for ships in kills_ships.values() {
-        let mut unique: Vec<i32> = ships.iter().copied().collect::<HashSet<_>>().into_iter().collect();
+        let mut unique: Vec<i32> = ships
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         if unique.len() < 2 {
             continue;
         }
@@ -1050,7 +1145,10 @@ async fn compute_fleet_comps(
     let comp_names = match nea_db::get_type_names(pool, &all_comp_type_ids).await {
         Ok(n) => n,
         Err(e) => {
-            tracing::warn!(entity_id, "doctrine_aggregator: fleet comp name resolution failed: {e}");
+            tracing::warn!(
+                entity_id,
+                "doctrine_aggregator: fleet comp name resolution failed: {e}"
+            );
             return None;
         }
     };

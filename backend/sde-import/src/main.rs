@@ -7,7 +7,10 @@ use tracing::{info, warn};
 const SDE_CACHE_DIR: &str = "/tmp/sde_cache";
 
 const CSV_URLS: &[(&str, &str)] = &[
-    ("invTypes.csv", "https://www.fuzzwork.co.uk/dump/latest/invTypes.csv"),
+    (
+        "invTypes.csv",
+        "https://www.fuzzwork.co.uk/dump/latest/invTypes.csv",
+    ),
     (
         "industryActivityProducts.csv",
         "https://www.fuzzwork.co.uk/dump/latest/industryActivityProducts.csv",
@@ -16,7 +19,10 @@ const CSV_URLS: &[(&str, &str)] = &[
         "industryActivityMaterials.csv",
         "https://www.fuzzwork.co.uk/dump/latest/industryActivityMaterials.csv",
     ),
-    ("invGroups.csv", "https://www.fuzzwork.co.uk/dump/latest/invGroups.csv"),
+    (
+        "invGroups.csv",
+        "https://www.fuzzwork.co.uk/dump/latest/invGroups.csv",
+    ),
     (
         "invCategories.csv",
         "https://www.fuzzwork.co.uk/dump/latest/invCategories.csv",
@@ -36,8 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("sde-import starting");
 
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
     let pool = nea_db::create_pool(&database_url).await?;
     info!("connected to database");
@@ -109,7 +114,11 @@ async fn download_all_csvs() -> Result<(), Box<dyn std::error::Error>> {
         if bytes.len() < 1000 {
             let preview = String::from_utf8_lossy(&bytes);
             warn!(file = %filename, bytes = bytes.len(), content = %preview, "downloaded file suspiciously small, may not be valid CSV");
-            return Err(format!("download of {filename} returned only {} bytes: {preview}", bytes.len()).into());
+            return Err(format!(
+                "download of {filename} returned only {} bytes: {preview}",
+                bytes.len()
+            )
+            .into());
         }
         tokio::fs::write(&dest, &bytes).await?;
         info!(file = %filename, size_mb = format_args!("{:.1}", bytes.len() as f64 / 1_048_576.0), "download complete");
@@ -199,16 +208,28 @@ async fn import_types(
             Ok(v) => v,
             Err(_) => continue,
         };
-        let group_id_raw: Option<i32> = record
-            .get(1)
-            .and_then(|s| if s.is_empty() || s == "None" { None } else { s.parse().ok() });
+        let group_id_raw: Option<i32> = record.get(1).and_then(|s| {
+            if s.is_empty() || s == "None" {
+                None
+            } else {
+                s.parse().ok()
+            }
+        });
         let name = record.get(2).unwrap_or("").to_string();
-        let volume: Option<f64> = record
-            .get(5)
-            .and_then(|s| if s.is_empty() || s == "None" { None } else { s.parse().ok() });
-        let market_group_id: Option<i32> = record
-            .get(11)
-            .and_then(|s| if s.is_empty() || s == "None" { None } else { s.parse().ok() });
+        let volume: Option<f64> = record.get(5).and_then(|s| {
+            if s.is_empty() || s == "None" {
+                None
+            } else {
+                s.parse().ok()
+            }
+        });
+        let market_group_id: Option<i32> = record.get(11).and_then(|s| {
+            if s.is_empty() || s == "None" {
+                None
+            } else {
+                s.parse().ok()
+            }
+        });
 
         // Resolve group -> category chain
         let (group_name, category_id, category_name) = match group_id_raw {
@@ -241,7 +262,10 @@ async fn import_types(
     for (i, chunk) in rows.chunks(500).enumerate() {
         insert_types_batch(pool, chunk).await?;
         let done = ((i + 1) * 500).min(total);
-        info!(progress = format_args!("{done}/{total}"), "inserting sde_types");
+        info!(
+            progress = format_args!("{done}/{total}"),
+            "inserting sde_types"
+        );
     }
 
     Ok(total)

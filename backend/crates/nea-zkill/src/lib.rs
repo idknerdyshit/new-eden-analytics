@@ -268,7 +268,6 @@ impl R2z2Client {
 
         Ok(pairs)
     }
-
 }
 
 impl Default for R2z2Client {
@@ -462,8 +461,7 @@ mod tests {
     #[test]
     fn deserialize_history() {
         let json = r#"{"100001": "hash1", "100002": "hash2", "100003": "hash3"}"#;
-        let map: std::collections::HashMap<String, String> =
-            serde_json::from_str(json).unwrap();
+        let map: std::collections::HashMap<String, String> = serde_json::from_str(json).unwrap();
         let mut pairs: Vec<(i64, String)> = map
             .into_iter()
             .filter_map(|(k, v)| k.parse::<i64>().ok().map(|id| (id, v)))

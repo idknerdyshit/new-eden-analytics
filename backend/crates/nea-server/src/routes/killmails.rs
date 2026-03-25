@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::get,
-    Json, Router,
 };
 use tracing::debug;
 
@@ -28,10 +28,16 @@ async fn get_killmail(
         nea_db::get_killmail_items_detail(&state.pool, killmail_id, killmail.kill_time),
     )?;
 
-    let victim = victim
-        .ok_or_else(|| ApiError::NotFound(format!("victim for killmail_id {killmail_id} not found")))?;
+    let victim = victim.ok_or_else(|| {
+        ApiError::NotFound(format!("victim for killmail_id {killmail_id} not found"))
+    })?;
 
-    debug!(killmail_id, attackers = attackers.len(), items = items.len(), "get_killmail");
+    debug!(
+        killmail_id,
+        attackers = attackers.len(),
+        items = items.len(),
+        "get_killmail"
+    );
     Ok(Json(KillmailDetail {
         killmail,
         victim,

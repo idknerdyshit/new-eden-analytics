@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
@@ -116,8 +116,19 @@ async fn get_alliance_kills(
         nea_db::count_alliance_kills(&state.pool, alliance_id),
     )?;
 
-    debug!(alliance_id, kills = killmails.len(), total, page, "get_alliance_kills");
-    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
+    debug!(
+        alliance_id,
+        kills = killmails.len(),
+        total,
+        page,
+        "get_alliance_kills"
+    );
+    Ok(Json(PaginatedKillmails {
+        killmails,
+        page,
+        per_page,
+        total,
+    }))
 }
 
 #[tracing::instrument(skip(state, params))]
@@ -135,6 +146,17 @@ async fn get_alliance_losses(
         nea_db::count_alliance_losses(&state.pool, alliance_id),
     )?;
 
-    debug!(alliance_id, losses = killmails.len(), total, page, "get_alliance_losses");
-    Ok(Json(PaginatedKillmails { killmails, page, per_page, total }))
+    debug!(
+        alliance_id,
+        losses = killmails.len(),
+        total,
+        page,
+        "get_alliance_losses"
+    );
+    Ok(Json(PaginatedKillmails {
+        killmails,
+        page,
+        per_page,
+        total,
+    }))
 }

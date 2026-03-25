@@ -3,8 +3,8 @@ use chrono::NaiveDate;
 use http::Request;
 use http_body_util::BodyExt;
 use sqlx::PgPool;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tower::ServiceExt;
 
 fn build_test_app(pool: PgPool) -> Router {
@@ -24,14 +24,12 @@ fn date(y: i32, m: u32, d: u32) -> NaiveDate {
 }
 
 async fn insert_sde_type(pool: &PgPool, type_id: i32, name: &str) {
-    sqlx::query(
-        "INSERT INTO sde_types (type_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-    )
-    .bind(type_id)
-    .bind(name)
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO sde_types (type_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(type_id)
+        .bind(name)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 async fn insert_sde_pair(pool: &PgPool, product_id: i32, material_id: i32) {
@@ -474,7 +472,12 @@ async fn test_request_id_header(pool: PgPool) {
         .unwrap();
 
     assert!(response.headers().contains_key("x-request-id"));
-    let request_id = response.headers().get("x-request-id").unwrap().to_str().unwrap();
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap();
     // Should be a valid UUID
     assert!(uuid::Uuid::parse_str(request_id).is_ok());
 }

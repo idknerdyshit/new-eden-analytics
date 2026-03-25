@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use nea_db::MarketSnapshot;
-use nea_esi::{compute_best_bid_ask, EsiClient, EsiError, JITA_STATION, THE_FORGE};
+use nea_esi::{EsiClient, EsiError, JITA_STATION, THE_FORGE, compute_best_bid_ask};
 use sqlx::PgPool;
 use tokio::time;
 
@@ -23,10 +23,7 @@ pub async fn run(pool: PgPool, esi: Arc<EsiClient>) {
             }
         };
 
-        tracing::info!(
-            "market_orders: snapshotting {} types",
-            type_ids.len()
-        );
+        tracing::info!("market_orders: snapshotting {} types", type_ids.len());
 
         let mut fetched = 0u64;
         let mut errors = 0u64;
@@ -96,15 +93,20 @@ async fn fetch_and_snapshot(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let orders = match esi.market_orders(THE_FORGE, type_id).await {
         Ok(o) => o,
-        Err(EsiError::Api { status: 400, ref message }) if message.contains("not tradable") => {
+        Err(EsiError::Api {
+            status: 400,
+            ref message,
+        }) if message.contains("not tradable") => {
             nea_db::mark_type_non_tradable(pool, type_id).await?;
-            tracing::info!(type_id, "marked type as non-tradable, will skip in future cycles");
+            tracing::info!(
+                type_id,
+                "marked type as non-tradable, will skip in future cycles"
+            );
             return Ok(());
         }
         Err(e) => return Err(e.into()),
     };
-    let (best_bid, best_ask, bid_volume, ask_volume) =
-        compute_best_bid_ask(&orders, JITA_STATION);
+    let (best_bid, best_ask, bid_volume, ask_volume) = compute_best_bid_ask(&orders, JITA_STATION);
 
     let spread = compute_spread(best_bid, best_ask);
 

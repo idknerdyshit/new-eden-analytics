@@ -103,8 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let days = parse_days_arg();
     info!(days, "kill-backfill starting");
 
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = nea_db::create_pool(&database_url).await?;
     let esi = Arc::new(EsiClient::with_user_agent(
         "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)",
@@ -220,7 +219,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
-    info!(total = total_inserted, "backfill complete, running aggregation");
+    info!(
+        total = total_inserted,
+        "backfill complete, running aggregation"
+    );
 
     // Run aggregation over the full backfilled range.
     run_aggregation(&pool, start_date, yesterday).await?;
@@ -289,7 +291,7 @@ async fn process_killmail(
         killmail_id: km.killmail_id,
         kill_time,
         solar_system_id: Some(km.solar_system_id),
-        total_value: None, // ESI killmail endpoint doesn't include zkb value
+        total_value: None,      // ESI killmail endpoint doesn't include zkb value
         r2z2_sequence_id: None, // not obtained via R2Z2 polling
     };
 

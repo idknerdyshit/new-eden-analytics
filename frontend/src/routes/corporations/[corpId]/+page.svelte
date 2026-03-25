@@ -2,14 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api/client';
-	import type {
-		CorporationDetail,
-		DoctrineProfileData,
-		ShipUsageEntry,
-		DoctrineGroup,
-		ShipTrend,
-		FleetComp
-	} from '$lib/api/client';
+	import type { CorporationDetail } from '$lib/api/client';
 	import { formatNumber } from '$lib/utils/formatters';
 	import FittingCard from '$lib/components/FittingCard.svelte';
 	import VariantOverlay from '$lib/components/VariantOverlay.svelte';
@@ -52,14 +45,7 @@
 		}
 	}
 
-	let activeProfile = $derived<DoctrineProfileData | null>(
-		detail?.profiles.find((p) => p.window_days === selectedWindow) ?? null
-	);
-	let shipUsage = $derived<ShipUsageEntry[]>(activeProfile?.ship_usage ?? []);
-	let doctrines = $derived<DoctrineGroup[]>(activeProfile?.doctrines ?? []);
-	let shipTrends = $derived<ShipTrend[]>(activeProfile?.ship_trends ?? []);
-	let fleetComps = $derived<FleetComp[]>(activeProfile?.fleet_comps ?? []);
-	let maxUsageCount = $derived(shipUsage.length > 0 ? shipUsage[0].count : 1);
+	let windows = [7, 30, 90] as const;
 </script>
 
 <div class="space-y-8">
@@ -108,7 +94,7 @@
 
 		<!-- Window selector -->
 		<div class="flex gap-2">
-			{#each [7, 30, 90] as window}
+			{#each windows as window}
 				<button
 					onclick={() => (selectedWindow = window)}
 					class="rounded border px-4 py-2 text-sm transition-colors"
@@ -123,7 +109,15 @@
 			{/each}
 		</div>
 
-		{#if activeProfile}
+		{#each windows as window (window)}
+			{@const profile = detail.profiles.find((p) => p.window_days === window) ?? null}
+			{@const usage = profile?.ship_usage ?? []}
+			{@const dcts = profile?.doctrines ?? []}
+			{@const trends = profile?.ship_trends ?? []}
+			{@const comps = profile?.fleet_comps ?? []}
+			{@const maxCount = usage.length > 0 ? usage[0].count : 1}
+			<div class="space-y-8" class:hidden={window !== selectedWindow}>
+			{#if profile}
 			<!-- Stats cards -->
 			<section class="grid grid-cols-2 gap-4 lg:grid-cols-3">
 				<div
@@ -135,7 +129,7 @@
 						Total Kills
 					</div>
 					<div class="mt-1 text-2xl font-bold text-[var(--color-accent-green)]">
-						{formatNumber(activeProfile.total_kills)}
+						{formatNumber(profile.total_kills)}
 					</div>
 				</div>
 				<div
@@ -147,7 +141,7 @@
 						Total Losses
 					</div>
 					<div class="mt-1 text-2xl font-bold text-[var(--color-accent-red)]">
-						{formatNumber(activeProfile.total_losses)}
+						{formatNumber(profile.total_losses)}
 					</div>
 				</div>
 				<div
@@ -159,20 +153,20 @@
 						Doctrines Detected
 					</div>
 					<div class="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">
-						{doctrines.length}
+						{dcts.length}
 					</div>
 				</div>
 			</section>
 
 			<!-- Ship Usage -->
-			{#if shipUsage.length > 0}
+			{#if usage.length > 0}
 				<section>
 					<h2 class="mb-4 text-lg font-semibold">Ship Usage</h2>
 					<div
 						class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5"
 					>
 						<div class="space-y-2">
-							{#each shipUsage as ship, i}
+							{#each usage as ship, i}
 								<div class="flex items-center gap-3">
 									<span
 										class="w-5 text-right text-xs text-[var(--color-text-secondary)]"
@@ -198,7 +192,7 @@
 										>
 											<div
 												class="h-full rounded-full bg-[var(--color-accent-blue)]"
-												style="width: {(ship.count / maxUsageCount) * 100}%"
+												style="width: {(ship.count / maxCount) * 100}%"
 											></div>
 										</div>
 									</div>
@@ -210,11 +204,11 @@
 			{/if}
 
 			<!-- Doctrines -->
-			{#if doctrines.length > 0}
+			{#if dcts.length > 0}
 				<section>
 					<h2 class="mb-4 text-lg font-semibold">Doctrines</h2>
 					<div class="space-y-4">
-						{#each doctrines as group, gi}
+						{#each dcts as group, gi}
 							<details class="group rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]" open>
 								<summary class="flex cursor-pointer items-center justify-between p-4 select-none">
 									<div class="flex flex-wrap items-center gap-2 overflow-hidden max-h-20">
@@ -294,7 +288,7 @@
 			{/if}
 
 			<!-- Trends -->
-			{#if shipTrends.length > 0}
+			{#if trends.length > 0}
 				<section>
 					<h2 class="mb-4 text-lg font-semibold">Ship Trends</h2>
 					<div
@@ -312,7 +306,7 @@
 								</tr>
 							</thead>
 							<tbody>
-								{#each shipTrends as trend}
+								{#each trends as trend}
 									<tr
 										class="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-bg-tertiary)]"
 									>
@@ -356,14 +350,14 @@
 			{/if}
 
 			<!-- Fleet Compositions -->
-			{#if fleetComps.length > 0}
+			{#if comps.length > 0}
 				<section>
 					<h2 class="mb-4 text-lg font-semibold">Fleet Compositions</h2>
 					<div
 						class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5"
 					>
 						<div class="space-y-3">
-							{#each fleetComps as comp}
+							{#each comps as comp}
 								<div
 									class="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-3"
 								>
@@ -397,10 +391,12 @@
 			<div
 				class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 text-center text-sm text-[var(--color-text-secondary)]"
 			>
-				No doctrine data available for the {selectedWindow}-day window. Data will appear after
+				No doctrine data available for the {window}-day window. Data will appear after
 				the next aggregation cycle.
 			</div>
 		{/if}
+			</div>
+		{/each}
 
 		<KillLossTabs entityType="corporation" entityId={corpId} />
 	{/if}

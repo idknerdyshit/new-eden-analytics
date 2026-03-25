@@ -1,14 +1,14 @@
 use axum::{
+    Json, Router,
     extract::{Query, State},
     http::header::SET_COOKIE,
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
-    Json, Router,
 };
 use axum_extra::extract::CookieJar;
 use oauth2::{
-    basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
-    RedirectUrl, TokenResponse, TokenUrl,
+    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl, TokenResponse,
+    TokenUrl, basic::BasicClient,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -72,9 +72,7 @@ fn build_oauth_client(
 async fn login(State(state): State<AppState>) -> Result<Response, ApiError> {
     let client = build_oauth_client(&state)?;
 
-    let (auth_url, csrf_token) = client
-        .authorize_url(CsrfToken::new_random)
-        .url();
+    let (auth_url, csrf_token) = client.authorize_url(CsrfToken::new_random).url();
 
     let csrf_cookie = cookie_str("nea_csrf", csrf_token.secret(), 600, state.secure_cookies);
 
@@ -125,7 +123,9 @@ async fn callback(
 
     let expires_at = token_result
         .expires_in()
-        .map(|d: std::time::Duration| chrono::Utc::now() + chrono::Duration::seconds(d.as_secs() as i64))
+        .map(|d: std::time::Duration| {
+            chrono::Utc::now() + chrono::Duration::seconds(d.as_secs() as i64)
+        })
         .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
 
     // Tokens are unused — store empty bytes. Add encryption if retrieval is ever needed.
@@ -143,12 +143,21 @@ async fn callback(
 
     info!(character_id, character_name = %character_name, "OAuth callback success");
 
-    let session_cookie = cookie_str(SESSION_COOKIE, &session_id.to_string(), 86400, app_state.secure_cookies);
+    let session_cookie = cookie_str(
+        SESSION_COOKIE,
+        &session_id.to_string(),
+        86400,
+        app_state.secure_cookies,
+    );
     let clear_csrf = cookie_str("nea_csrf", "", 0, app_state.secure_cookies);
 
     let mut response = Redirect::temporary("/").into_response();
-    response.headers_mut().append(SET_COOKIE, session_cookie.parse().unwrap());
-    response.headers_mut().append(SET_COOKIE, clear_csrf.parse().unwrap());
+    response
+        .headers_mut()
+        .append(SET_COOKIE, session_cookie.parse().unwrap());
+    response
+        .headers_mut()
+        .append(SET_COOKIE, clear_csrf.parse().unwrap());
     Ok(response)
 }
 
@@ -181,9 +190,13 @@ async fn verify_eve_jwt(token: &str, state: &AppState) -> Result<(i64, String), 
     let client = reqwest::Client::new();
 
     // Try cached JWKS first, fetch if miss or kid not found
-    let find_jwk = |jwks: &jsonwebtoken::jwk::JwkSet, kid: &str| -> Option<jsonwebtoken::jwk::Jwk> {
-        jwks.keys.iter().find(|k| k.common.key_id.as_deref() == Some(kid)).cloned()
-    };
+    let find_jwk =
+        |jwks: &jsonwebtoken::jwk::JwkSet, kid: &str| -> Option<jsonwebtoken::jwk::Jwk> {
+            jwks.keys
+                .iter()
+                .find(|k| k.common.key_id.as_deref() == Some(kid))
+                .cloned()
+        };
 
     let jwk = {
         let cache = state.jwks_cache.read().await;
@@ -226,10 +239,7 @@ async fn verify_eve_jwt(token: &str, state: &AppState) -> Result<(i64, String), 
 }
 
 #[tracing::instrument(skip(state, jar))]
-async fn logout(
-    State(state): State<AppState>,
-    jar: CookieJar,
-) -> Result<Response, ApiError> {
+async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     if let Some(cookie) = jar.get(SESSION_COOKIE) {
         if let Ok(session_id) = cookie.value().parse::<uuid::Uuid>() {
             let _ = nea_db::delete_session(&state.pool, session_id).await;
@@ -240,11 +250,7 @@ async fn logout(
 
     let clear_cookie = cookie_str(SESSION_COOKIE, "", 0, state.secure_cookies);
 
-    Ok((
-        [(SET_COOKIE, clear_cookie)],
-        Json(json!({"ok": true})),
-    )
-        .into_response())
+    Ok(([(SET_COOKIE, clear_cookie)], Json(json!({"ok": true}))).into_response())
 }
 
 #[tracing::instrument(skip(state, jar))]
@@ -279,7 +285,8 @@ mod tests {
 
     #[test]
     fn test_eve_claims_deserialize() {
-        let json = r#"{"sub":"CHARACTER:EVE:12345678","name":"Test Pilot","iss":"login.eveonline.com"}"#;
+        let json =
+            r#"{"sub":"CHARACTER:EVE:12345678","name":"Test Pilot","iss":"login.eveonline.com"}"#;
         let claims: EveClaims = serde_json::from_str(json).unwrap();
         assert_eq!(claims.sub, "CHARACTER:EVE:12345678");
         assert_eq!(claims.name.as_deref(), Some("Test Pilot"));
@@ -296,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn test_verify_eve_jwt_rejects_tampered_token() {
         use base64::Engine;
-        use jsonwebtoken::{encode, EncodingKey, Header};
+        use jsonwebtoken::{EncodingKey, Header, encode};
         use rsa::pkcs8::EncodePrivateKey;
         use rsa::traits::PublicKeyParts;
         use std::sync::Arc;
@@ -305,7 +312,9 @@ mod tests {
         // Generate a test RSA keypair
         let mut rng = rsa::rand_core::OsRng;
         let private_key = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let pem = private_key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF).unwrap();
+        let pem = private_key
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .unwrap();
         let encoding_key = EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap();
 
         let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
@@ -328,10 +337,10 @@ mod tests {
 
         // Build a JwkSet from the public key
         let public_key = rsa::RsaPublicKey::from(&private_key);
-        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(public_key.n().to_bytes_be());
-        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(public_key.e().to_bytes_be());
+        let n =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+        let e =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
 
         let jwks_json = serde_json::json!({
             "keys": [{

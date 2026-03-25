@@ -33,8 +33,7 @@ async fn main() {
             Some("analyzer") => {
                 tracing::info!("nea-worker: running analyzer once");
 
-                let database_url =
-                    std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+                let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
                 let pool = nea_db::create_pool(&database_url)
                     .await
                     .expect("failed to create database pool");
@@ -60,8 +59,7 @@ async fn main() {
             Some("doctrine_aggregator") => {
                 tracing::info!("nea-worker: running doctrine_aggregator once");
 
-                let database_url =
-                    std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+                let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
                 let pool = nea_db::create_pool(&database_url)
                     .await
                     .expect("failed to create database pool");
@@ -93,8 +91,7 @@ async fn main() {
     tracing::info!("nea-worker starting");
 
     // Database pool
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = nea_db::create_pool(&database_url)
         .await
         .expect("failed to create database pool");
@@ -131,12 +128,10 @@ async fn main() {
         tokio::spawn(async move { killmail_poller::run(pool_kp, r2z2_kp).await });
 
     let pool_agg = pool.clone();
-    let aggregation_handle =
-        tokio::spawn(async move { aggregation::run(pool_agg).await });
+    let aggregation_handle = tokio::spawn(async move { aggregation::run(pool_agg).await });
 
     let pool_an = pool.clone();
-    let analyzer_handle =
-        tokio::spawn(async move { analyzer::run(pool_an).await });
+    let analyzer_handle = tokio::spawn(async move { analyzer::run(pool_an).await });
 
     let pool_pa = pool.clone();
     let esi_pa = Arc::clone(&esi);
@@ -156,7 +151,10 @@ async fn main() {
             match nea_db::cleanup_expired_sessions(&pool_sc).await {
                 Ok(count) => {
                     if count > 0 {
-                        tracing::info!(deleted = count, "session_cleanup: removed expired sessions");
+                        tracing::info!(
+                            deleted = count,
+                            "session_cleanup: removed expired sessions"
+                        );
                     }
                 }
                 Err(e) => {

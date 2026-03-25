@@ -30,9 +30,16 @@ export interface ProductMaterial {
 	quantity: number;
 }
 
+export interface TrendingDestruction {
+	type_id: number;
+	type_name: string | null;
+	quantity_destroyed: number;
+	kill_count: number;
+}
+
 export interface DashboardData {
 	top_correlations: CorrelationResult[];
-	top_destruction: DestructionEntry[];
+	top_destruction: TrendingDestruction[];
 }
 
 export interface Mover {

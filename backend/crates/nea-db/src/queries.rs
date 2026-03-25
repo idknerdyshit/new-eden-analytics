@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use sqlx::{PgPool, QueryBuilder, Postgres};
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use tracing::debug;
 use uuid::Uuid;
 
@@ -37,14 +37,16 @@ pub async fn search_types(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(query, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "search_types");
+    debug!(
+        query,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "search_types"
+    );
     Ok(rows)
 }
 
-pub async fn search_types_count(
-    pool: &PgPool,
-    query: &str,
-) -> Result<i64, DbError> {
+pub async fn search_types_count(pool: &PgPool, query: &str) -> Result<i64, DbError> {
     let start = Instant::now();
     let (count,): (i64,) = sqlx::query_as(
         r#"
@@ -56,7 +58,12 @@ pub async fn search_types_count(
     .bind(query)
     .fetch_one(pool)
     .await?;
-    debug!(query, count, elapsed_ms = start.elapsed().as_millis() as u64, "search_types_count");
+    debug!(
+        query,
+        count,
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "search_types_count"
+    );
     Ok(count)
 }
 
@@ -73,7 +80,12 @@ pub async fn get_type(pool: &PgPool, type_id: i32) -> Result<Option<SdeType>, Db
     .bind(type_id)
     .fetch_optional(pool)
     .await?;
-    debug!(type_id, found = row.is_some(), elapsed_ms = start.elapsed().as_millis() as u64, "get_type");
+    debug!(
+        type_id,
+        found = row.is_some(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_type"
+    );
     Ok(row)
 }
 
@@ -85,13 +97,16 @@ pub async fn get_type_names(
         return Ok(HashMap::new());
     }
     let start = Instant::now();
-    let rows: Vec<(i32, String)> = sqlx::query_as(
-        "SELECT type_id, name FROM sde_types WHERE type_id = ANY($1)",
-    )
-    .bind(type_ids)
-    .fetch_all(pool)
-    .await?;
-    debug!(count = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_type_names");
+    let rows: Vec<(i32, String)> =
+        sqlx::query_as("SELECT type_id, name FROM sde_types WHERE type_id = ANY($1)")
+            .bind(type_ids)
+            .fetch_all(pool)
+            .await?;
+    debug!(
+        count = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_type_names"
+    );
     Ok(rows.into_iter().collect())
 }
 
@@ -111,7 +126,12 @@ pub async fn get_product_materials(
     .bind(product_type_id)
     .fetch_all(pool)
     .await?;
-    debug!(product_type_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_product_materials");
+    debug!(
+        product_type_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_product_materials"
+    );
     Ok(rows)
 }
 
@@ -133,18 +153,20 @@ pub async fn get_tracked_type_ids(pool: &PgPool) -> Result<Vec<i32>, DbError> {
     .fetch_all(pool)
     .await?;
     let ids: Vec<i32> = rows.into_iter().map(|r| r.0).collect();
-    debug!(count = ids.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_tracked_type_ids");
+    debug!(
+        count = ids.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_tracked_type_ids"
+    );
     Ok(ids)
 }
 
 /// Mark a type as non-tradable so it is excluded from future market fetches.
 pub async fn mark_type_non_tradable(pool: &PgPool, type_id: i32) -> Result<(), DbError> {
-    sqlx::query(
-        "INSERT INTO non_tradable_types (type_id) VALUES ($1) ON CONFLICT DO NOTHING",
-    )
-    .bind(type_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO non_tradable_types (type_id) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(type_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -173,7 +195,14 @@ pub async fn get_market_history(
     .bind(days)
     .fetch_all(pool)
     .await?;
-    debug!(type_id, region_id, days, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_market_history");
+    debug!(
+        type_id,
+        region_id,
+        days,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_market_history"
+    );
     Ok(rows)
 }
 
@@ -199,14 +228,18 @@ pub async fn get_market_snapshots(
     .bind(hours)
     .fetch_all(pool)
     .await?;
-    debug!(type_id, region_id, hours, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_market_snapshots");
+    debug!(
+        type_id,
+        region_id,
+        hours,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_market_snapshots"
+    );
     Ok(rows)
 }
 
-pub async fn insert_market_history(
-    pool: &PgPool,
-    rows: &[MarketHistory],
-) -> Result<(), DbError> {
+pub async fn insert_market_history(pool: &PgPool, rows: &[MarketHistory]) -> Result<(), DbError> {
     for chunk in rows.chunks(BATCH_SIZE) {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
             "INSERT INTO market_history (type_id, region_id, date, average, highest, lowest, volume, order_count) ",
@@ -227,10 +260,7 @@ pub async fn insert_market_history(
     Ok(())
 }
 
-pub async fn insert_market_snapshot(
-    pool: &PgPool,
-    snap: &MarketSnapshot,
-) -> Result<(), DbError> {
+pub async fn insert_market_snapshot(pool: &PgPool, snap: &MarketSnapshot) -> Result<(), DbError> {
     sqlx::query(
         r#"
         INSERT INTO market_snapshots (type_id, region_id, station_id, ts, best_bid, best_ask,
@@ -281,7 +311,6 @@ pub async fn insert_market_snapshots(
 // Kill queries
 // ═══════════════════════════════════════════════════════════════════
 
-
 pub async fn insert_killmail(pool: &PgPool, km: &Killmail) -> Result<(), DbError> {
     sqlx::query(
         r#"
@@ -300,10 +329,7 @@ pub async fn insert_killmail(pool: &PgPool, km: &Killmail) -> Result<(), DbError
     Ok(())
 }
 
-pub async fn insert_killmail_items(
-    pool: &PgPool,
-    items: &[KillmailItem],
-) -> Result<(), DbError> {
+pub async fn insert_killmail_items(pool: &PgPool, items: &[KillmailItem]) -> Result<(), DbError> {
     for chunk in items.chunks(BATCH_SIZE) {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
             "INSERT INTO killmail_items (killmail_id, kill_time, type_id, quantity_destroyed, quantity_dropped, flag) ",
@@ -324,10 +350,7 @@ pub async fn insert_killmail_items(
     Ok(())
 }
 
-pub async fn insert_killmail_victim(
-    pool: &PgPool,
-    victim: &KillmailVictim,
-) -> Result<(), DbError> {
+pub async fn insert_killmail_victim(pool: &PgPool, victim: &KillmailVictim) -> Result<(), DbError> {
     sqlx::query(
         r#"
         INSERT INTO killmail_victims (killmail_id, kill_time, ship_type_id, character_id, corporation_id, alliance_id)
@@ -401,7 +424,12 @@ pub async fn get_killmail_items_batch(
     for (km_id, type_id, flag) in rows {
         map.entry(km_id).or_default().push((type_id, flag));
     }
-    debug!(keys = keys.len(), items = map.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_killmail_items_batch");
+    debug!(
+        keys = keys.len(),
+        items = map.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_killmail_items_batch"
+    );
     Ok(map)
 }
 
@@ -424,7 +452,13 @@ pub async fn get_daily_destruction(
     .bind(days)
     .fetch_all(pool)
     .await?;
-    debug!(type_id, days, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_daily_destruction");
+    debug!(
+        type_id,
+        days,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_daily_destruction"
+    );
     Ok(rows)
 }
 
@@ -476,14 +510,53 @@ pub async fn get_top_destruction(
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    debug!(days, limit, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_top_destruction");
+    debug!(
+        days,
+        limit,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_top_destruction"
+    );
     Ok(rows)
 }
 
-pub async fn get_movers(
+pub async fn get_trending_destruction(
     pool: &PgPool,
+    days: i32,
     limit: i32,
-) -> Result<Vec<Mover>, DbError> {
+) -> Result<Vec<TrendingDestruction>, DbError> {
+    let start = Instant::now();
+    let rows = sqlx::query_as::<_, TrendingDestruction>(
+        r#"
+        SELECT dd.type_id,
+               st.name AS type_name,
+               SUM(dd.quantity_destroyed)::bigint AS quantity_destroyed,
+               SUM(dd.kill_count)::bigint AS kill_count
+        FROM daily_destruction dd
+        JOIN sde_types st ON st.type_id = dd.type_id
+        WHERE dd.date >= CURRENT_DATE - $1 * INTERVAL '1 day'
+          AND st.category_id IN (6, 7)
+          AND st.group_id != 29
+        GROUP BY dd.type_id, st.name
+        ORDER BY quantity_destroyed DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(days)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    debug!(
+        days,
+        limit,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_trending_destruction"
+    );
+    Ok(rows)
+}
+
+pub async fn get_movers(pool: &PgPool, limit: i32) -> Result<Vec<Mover>, DbError> {
     let start = Instant::now();
     let rows = sqlx::query_as::<_, Mover>(
         r#"
@@ -523,7 +596,12 @@ pub async fn get_movers(
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    debug!(limit, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_movers");
+    debug!(
+        limit,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_movers"
+    );
     Ok(rows)
 }
 
@@ -531,10 +609,7 @@ pub async fn get_movers(
 // Analysis queries
 // ═══════════════════════════════════════════════════════════════════
 
-pub async fn upsert_correlation(
-    pool: &PgPool,
-    result: &CorrelationResult,
-) -> Result<(), DbError> {
+pub async fn upsert_correlation(pool: &PgPool, result: &CorrelationResult) -> Result<(), DbError> {
     sqlx::query(
         r#"
         INSERT INTO correlation_results
@@ -592,7 +667,12 @@ pub async fn get_correlations_for_product(
     .bind(product_type_id)
     .fetch_all(pool)
     .await?;
-    debug!(product_type_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_correlations_for_product");
+    debug!(
+        product_type_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_correlations_for_product"
+    );
     Ok(rows)
 }
 
@@ -620,14 +700,17 @@ pub async fn get_top_correlations(
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    debug!(limit, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_top_correlations");
+    debug!(
+        limit,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_top_correlations"
+    );
     Ok(rows)
 }
 
 /// Returns (product_type_id, material_type_id) pairs from the product-materials view.
-pub async fn get_all_product_material_pairs(
-    pool: &PgPool,
-) -> Result<Vec<(i32, i32)>, DbError> {
+pub async fn get_all_product_material_pairs(pool: &PgPool) -> Result<Vec<(i32, i32)>, DbError> {
     let start = Instant::now();
     let rows: Vec<(i32, i32)> = sqlx::query_as(
         r#"
@@ -638,7 +721,11 @@ pub async fn get_all_product_material_pairs(
     )
     .fetch_all(pool)
     .await?;
-    debug!(rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_all_product_material_pairs");
+    debug!(
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_all_product_material_pairs"
+    );
     Ok(rows)
 }
 
@@ -663,7 +750,12 @@ pub async fn get_destruction_series(
     .bind(end)
     .fetch_all(pool)
     .await?;
-    debug!(type_id, rows = rows.len(), elapsed_ms = timer.elapsed().as_millis() as u64, "get_destruction_series");
+    debug!(
+        type_id,
+        rows = rows.len(),
+        elapsed_ms = timer.elapsed().as_millis() as u64,
+        "get_destruction_series"
+    );
     Ok(rows)
 }
 
@@ -691,7 +783,13 @@ pub async fn get_price_series(
     .bind(end)
     .fetch_all(pool)
     .await?;
-    debug!(type_id, region_id, rows = rows.len(), elapsed_ms = timer.elapsed().as_millis() as u64, "get_price_series");
+    debug!(
+        type_id,
+        region_id,
+        rows = rows.len(),
+        elapsed_ms = timer.elapsed().as_millis() as u64,
+        "get_price_series"
+    );
     Ok(rows)
 }
 
@@ -882,14 +980,16 @@ pub async fn search_characters(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(query, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "search_characters");
+    debug!(
+        query,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "search_characters"
+    );
     Ok(rows)
 }
 
-pub async fn search_characters_count(
-    pool: &PgPool,
-    query: &str,
-) -> Result<i64, DbError> {
+pub async fn search_characters_count(pool: &PgPool, query: &str) -> Result<i64, DbError> {
     let pattern = format!("%{}%", query);
     let (count,): (i64,) = sqlx::query_as(
         r#"
@@ -979,7 +1079,12 @@ pub async fn get_character_kills(
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    debug!(character_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_character_kills");
+    debug!(
+        character_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_character_kills"
+    );
     Ok(rows)
 }
 
@@ -1003,7 +1108,12 @@ pub async fn get_character_losses(
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    debug!(character_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_character_losses");
+    debug!(
+        character_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_character_losses"
+    );
     Ok(rows)
 }
 
@@ -1020,6 +1130,13 @@ pub async fn get_character_kills_summary(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, KillmailSummary>(
         r#"
+        WITH kill_ids AS (
+            SELECT DISTINCT a.killmail_id, a.kill_time
+            FROM killmail_attackers a
+            WHERE a.character_id = $1
+            ORDER BY a.kill_time DESC
+            LIMIT $2 OFFSET $3
+        )
         SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
                v.ship_type_id AS victim_ship_type_id,
                st.name AS victim_ship_name,
@@ -1028,8 +1145,8 @@ pub async fn get_character_kills_summary(
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
                ac.attacker_count
-        FROM killmail_attackers a
-        JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
+        FROM kill_ids ki
+        JOIN killmails k ON k.killmail_id = ki.killmail_id AND k.kill_time = ki.kill_time
         LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
@@ -1038,12 +1155,7 @@ pub async fn get_character_kills_summary(
             FROM killmail_attackers a2
             WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
         ) ac ON true
-        WHERE a.character_id = $1
-        GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
-                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id,
-                 ac.attacker_count
         ORDER BY k.kill_time DESC
-        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(character_id)
@@ -1051,7 +1163,12 @@ pub async fn get_character_kills_summary(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(character_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_character_kills_summary");
+    debug!(
+        character_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_character_kills_summary"
+    );
     Ok(rows)
 }
 
@@ -1078,6 +1195,13 @@ pub async fn get_character_losses_summary(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, KillmailSummary>(
         r#"
+        WITH loss_ids AS (
+            SELECT v.killmail_id, v.kill_time
+            FROM killmail_victims v
+            WHERE v.character_id = $1
+            ORDER BY v.kill_time DESC
+            LIMIT $2 OFFSET $3
+        )
         SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
                v.ship_type_id AS victim_ship_type_id,
                st.name AS victim_ship_name,
@@ -1086,8 +1210,9 @@ pub async fn get_character_losses_summary(
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
                ac.attacker_count
-        FROM killmail_victims v
-        JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
+        FROM loss_ids li
+        JOIN killmails k ON k.killmail_id = li.killmail_id AND k.kill_time = li.kill_time
+        LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
         LEFT JOIN LATERAL (
@@ -1095,9 +1220,7 @@ pub async fn get_character_losses_summary(
             FROM killmail_attackers a2
             WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
         ) ac ON true
-        WHERE v.character_id = $1
         ORDER BY k.kill_time DESC
-        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(character_id)
@@ -1105,7 +1228,12 @@ pub async fn get_character_losses_summary(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(character_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_character_losses_summary");
+    debug!(
+        character_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_character_losses_summary"
+    );
     Ok(rows)
 }
 
@@ -1132,6 +1260,13 @@ pub async fn get_corporation_kills_summary(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, KillmailSummary>(
         r#"
+        WITH kill_ids AS (
+            SELECT DISTINCT a.killmail_id, a.kill_time
+            FROM killmail_attackers a
+            WHERE a.corporation_id = $1
+            ORDER BY a.kill_time DESC
+            LIMIT $2 OFFSET $3
+        )
         SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
                v.ship_type_id AS victim_ship_type_id,
                st.name AS victim_ship_name,
@@ -1140,8 +1275,8 @@ pub async fn get_corporation_kills_summary(
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
                ac.attacker_count
-        FROM killmail_attackers a
-        JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
+        FROM kill_ids ki
+        JOIN killmails k ON k.killmail_id = ki.killmail_id AND k.kill_time = ki.kill_time
         LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
@@ -1150,12 +1285,7 @@ pub async fn get_corporation_kills_summary(
             FROM killmail_attackers a2
             WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
         ) ac ON true
-        WHERE a.corporation_id = $1
-        GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
-                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id,
-                 ac.attacker_count
         ORDER BY k.kill_time DESC
-        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(corporation_id)
@@ -1163,7 +1293,12 @@ pub async fn get_corporation_kills_summary(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(corporation_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_corporation_kills_summary");
+    debug!(
+        corporation_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_corporation_kills_summary"
+    );
     Ok(rows)
 }
 
@@ -1190,6 +1325,13 @@ pub async fn get_corporation_losses_summary(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, KillmailSummary>(
         r#"
+        WITH loss_ids AS (
+            SELECT v.killmail_id, v.kill_time
+            FROM killmail_victims v
+            WHERE v.corporation_id = $1
+            ORDER BY v.kill_time DESC
+            LIMIT $2 OFFSET $3
+        )
         SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
                v.ship_type_id AS victim_ship_type_id,
                st.name AS victim_ship_name,
@@ -1198,8 +1340,9 @@ pub async fn get_corporation_losses_summary(
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
                ac.attacker_count
-        FROM killmail_victims v
-        JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
+        FROM loss_ids li
+        JOIN killmails k ON k.killmail_id = li.killmail_id AND k.kill_time = li.kill_time
+        LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
         LEFT JOIN LATERAL (
@@ -1207,9 +1350,7 @@ pub async fn get_corporation_losses_summary(
             FROM killmail_attackers a2
             WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
         ) ac ON true
-        WHERE v.corporation_id = $1
         ORDER BY k.kill_time DESC
-        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(corporation_id)
@@ -1217,7 +1358,12 @@ pub async fn get_corporation_losses_summary(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(corporation_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_corporation_losses_summary");
+    debug!(
+        corporation_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_corporation_losses_summary"
+    );
     Ok(rows)
 }
 
@@ -1244,6 +1390,13 @@ pub async fn get_alliance_kills_summary(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, KillmailSummary>(
         r#"
+        WITH kill_ids AS (
+            SELECT DISTINCT a.killmail_id, a.kill_time
+            FROM killmail_attackers a
+            WHERE a.alliance_id = $1
+            ORDER BY a.kill_time DESC
+            LIMIT $2 OFFSET $3
+        )
         SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
                v.ship_type_id AS victim_ship_type_id,
                st.name AS victim_ship_name,
@@ -1252,8 +1405,8 @@ pub async fn get_alliance_kills_summary(
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
                ac.attacker_count
-        FROM killmail_attackers a
-        JOIN killmails k ON k.killmail_id = a.killmail_id AND k.kill_time = a.kill_time
+        FROM kill_ids ki
+        JOIN killmails k ON k.killmail_id = ki.killmail_id AND k.kill_time = ki.kill_time
         LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
@@ -1262,12 +1415,7 @@ pub async fn get_alliance_kills_summary(
             FROM killmail_attackers a2
             WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
         ) ac ON true
-        WHERE a.alliance_id = $1
-        GROUP BY k.killmail_id, k.kill_time, k.solar_system_id, k.total_value, k.r2z2_sequence_id,
-                 v.ship_type_id, st.name, v.character_id, c.name, v.corporation_id, v.alliance_id,
-                 ac.attacker_count
         ORDER BY k.kill_time DESC
-        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(alliance_id)
@@ -1275,7 +1423,12 @@ pub async fn get_alliance_kills_summary(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(alliance_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_alliance_kills_summary");
+    debug!(
+        alliance_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_alliance_kills_summary"
+    );
     Ok(rows)
 }
 
@@ -1302,6 +1455,13 @@ pub async fn get_alliance_losses_summary(
     let start = Instant::now();
     let rows = sqlx::query_as::<_, KillmailSummary>(
         r#"
+        WITH loss_ids AS (
+            SELECT v.killmail_id, v.kill_time
+            FROM killmail_victims v
+            WHERE v.alliance_id = $1
+            ORDER BY v.kill_time DESC
+            LIMIT $2 OFFSET $3
+        )
         SELECT k.killmail_id, k.kill_time, k.solar_system_id, k.total_value,
                v.ship_type_id AS victim_ship_type_id,
                st.name AS victim_ship_name,
@@ -1310,8 +1470,9 @@ pub async fn get_alliance_losses_summary(
                v.corporation_id AS victim_corporation_id,
                v.alliance_id AS victim_alliance_id,
                ac.attacker_count
-        FROM killmail_victims v
-        JOIN killmails k ON k.killmail_id = v.killmail_id AND k.kill_time = v.kill_time
+        FROM loss_ids li
+        JOIN killmails k ON k.killmail_id = li.killmail_id AND k.kill_time = li.kill_time
+        LEFT JOIN killmail_victims v ON v.killmail_id = k.killmail_id AND v.kill_time = k.kill_time
         LEFT JOIN sde_types st ON st.type_id = v.ship_type_id
         LEFT JOIN characters c ON c.character_id = v.character_id
         LEFT JOIN LATERAL (
@@ -1319,9 +1480,7 @@ pub async fn get_alliance_losses_summary(
             FROM killmail_attackers a2
             WHERE a2.killmail_id = k.killmail_id AND a2.kill_time = k.kill_time
         ) ac ON true
-        WHERE v.alliance_id = $1
         ORDER BY k.kill_time DESC
-        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(alliance_id)
@@ -1329,7 +1488,12 @@ pub async fn get_alliance_losses_summary(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(alliance_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_alliance_losses_summary");
+    debug!(
+        alliance_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_alliance_losses_summary"
+    );
     Ok(rows)
 }
 
@@ -1347,7 +1511,10 @@ pub async fn count_alliance_losses(pool: &PgPool, alliance_id: i64) -> Result<i6
     Ok(count)
 }
 
-pub async fn get_killmail_by_id(pool: &PgPool, killmail_id: i64) -> Result<Option<Killmail>, DbError> {
+pub async fn get_killmail_by_id(
+    pool: &PgPool,
+    killmail_id: i64,
+) -> Result<Option<Killmail>, DbError> {
     let start = Instant::now();
     let row = sqlx::query_as::<_, Killmail>(
         r#"
@@ -1360,7 +1527,12 @@ pub async fn get_killmail_by_id(pool: &PgPool, killmail_id: i64) -> Result<Optio
     .bind(killmail_id)
     .fetch_optional(pool)
     .await?;
-    debug!(killmail_id, found = row.is_some(), elapsed_ms = start.elapsed().as_millis() as u64, "get_killmail_by_id");
+    debug!(
+        killmail_id,
+        found = row.is_some(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_killmail_by_id"
+    );
     Ok(row)
 }
 
@@ -1456,10 +1628,7 @@ pub async fn get_killmail_items_detail(
 }
 
 /// Get character IDs that have activity but are not yet in the characters cache.
-pub async fn get_uncached_character_ids(
-    pool: &PgPool,
-    limit: i32,
-) -> Result<Vec<i64>, DbError> {
+pub async fn get_uncached_character_ids(pool: &PgPool, limit: i32) -> Result<Vec<i64>, DbError> {
     let rows: Vec<(i64,)> = sqlx::query_as(
         r#"
         SELECT DISTINCT character_id FROM (
@@ -1549,7 +1718,10 @@ pub async fn upsert_corporation(pool: &PgPool, corp: &Corporation) -> Result<(),
     Ok(())
 }
 
-pub async fn get_corporation(pool: &PgPool, corporation_id: i64) -> Result<Option<Corporation>, DbError> {
+pub async fn get_corporation(
+    pool: &PgPool,
+    corporation_id: i64,
+) -> Result<Option<Corporation>, DbError> {
     let row = sqlx::query_as::<_, Corporation>(
         r#"
         SELECT corporation_id, name, alliance_id, member_count, fetched_at
@@ -1585,14 +1757,16 @@ pub async fn search_corporations(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(query, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "search_corporations");
+    debug!(
+        query,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "search_corporations"
+    );
     Ok(rows)
 }
 
-pub async fn search_corporations_count(
-    pool: &PgPool,
-    query: &str,
-) -> Result<i64, DbError> {
+pub async fn search_corporations_count(pool: &PgPool, query: &str) -> Result<i64, DbError> {
     let pattern = format!("%{}%", query);
     let (count,): (i64,) = sqlx::query_as(
         r#"
@@ -1663,14 +1837,16 @@ pub async fn search_alliances(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    debug!(query, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "search_alliances");
+    debug!(
+        query,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "search_alliances"
+    );
     Ok(rows)
 }
 
-pub async fn search_alliances_count(
-    pool: &PgPool,
-    query: &str,
-) -> Result<i64, DbError> {
+pub async fn search_alliances_count(pool: &PgPool, query: &str) -> Result<i64, DbError> {
     let pattern = format!("%{}%", query);
     let (count,): (i64,) = sqlx::query_as(
         r#"
@@ -1743,7 +1919,13 @@ pub async fn get_doctrine_profiles(
     .bind(entity_id)
     .fetch_all(pool)
     .await?;
-    debug!(entity_type, entity_id, rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_doctrine_profiles");
+    debug!(
+        entity_type,
+        entity_id,
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_doctrine_profiles"
+    );
     Ok(rows)
 }
 
@@ -1767,7 +1949,11 @@ pub async fn get_recent_doctrine_profiles(
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    debug!(rows = rows.len(), elapsed_ms = start.elapsed().as_millis() as u64, "get_recent_doctrine_profiles");
+    debug!(
+        rows = rows.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "get_recent_doctrine_profiles"
+    );
     Ok(rows)
 }
 
@@ -1815,10 +2001,7 @@ pub async fn get_active_alliance_ids_since(
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-pub async fn get_uncached_corporation_ids(
-    pool: &PgPool,
-    limit: i32,
-) -> Result<Vec<i64>, DbError> {
+pub async fn get_uncached_corporation_ids(pool: &PgPool, limit: i32) -> Result<Vec<i64>, DbError> {
     let rows: Vec<(i64,)> = sqlx::query_as(
         r#"
         SELECT DISTINCT corporation_id FROM (
@@ -1838,10 +2021,7 @@ pub async fn get_uncached_corporation_ids(
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-pub async fn get_uncached_alliance_ids(
-    pool: &PgPool,
-    limit: i32,
-) -> Result<Vec<i64>, DbError> {
+pub async fn get_uncached_alliance_ids(pool: &PgPool, limit: i32) -> Result<Vec<i64>, DbError> {
     let rows: Vec<(i64,)> = sqlx::query_as(
         r#"
         SELECT DISTINCT alliance_id FROM (
@@ -1868,9 +2048,10 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         dotenvy::dotenv().ok();
-        let url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set for DB tests");
-        create_pool(&url).await.expect("failed to connect to test DB")
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for DB tests");
+        create_pool(&url)
+            .await
+            .expect("failed to connect to test DB")
     }
 
     #[tokio::test]
@@ -1905,11 +2086,15 @@ mod tests {
         // Re-insert is idempotent (ON CONFLICT DO NOTHING)
         insert_market_history(&pool, &rows).await.unwrap();
 
-        let fetched = get_market_history(&pool, 999999, 10000002, 3650).await.unwrap();
+        let fetched = get_market_history(&pool, 999999, 10000002, 3650)
+            .await
+            .unwrap();
         assert!(fetched.len() >= 2);
 
         sqlx::query("DELETE FROM market_history WHERE type_id = 999999")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1919,22 +2104,35 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2020, 6, 15).unwrap();
 
         let rows = vec![DailyDestruction {
-            type_id: 999998, date, quantity_destroyed: 100, kill_count: 10, type_name: None,
+            type_id: 999998,
+            date,
+            quantity_destroyed: 100,
+            kill_count: 10,
+            type_name: None,
         }];
         upsert_daily_destruction(&pool, &rows).await.unwrap();
 
         let updated = vec![DailyDestruction {
-            type_id: 999998, date, quantity_destroyed: 200, kill_count: 20, type_name: None,
+            type_id: 999998,
+            date,
+            quantity_destroyed: 200,
+            kill_count: 20,
+            type_name: None,
         }];
         upsert_daily_destruction(&pool, &updated).await.unwrap();
 
         let fetched = get_daily_destruction(&pool, 999998, 3650).await.unwrap();
-        let row = fetched.iter().find(|r| r.date == date).expect("row not found");
+        let row = fetched
+            .iter()
+            .find(|r| r.date == date)
+            .expect("row not found");
         assert_eq!(row.quantity_destroyed, 200);
         assert_eq!(row.kill_count, 20);
 
         sqlx::query("DELETE FROM daily_destruction WHERE type_id = 999998")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1942,8 +2140,16 @@ mod tests {
     async fn test_session_lifecycle() {
         let pool = test_pool().await;
 
-        upsert_user(&pool, 999999999, "TestUser", &[], &[], Utc::now() + chrono::Duration::hours(1))
-            .await.unwrap();
+        upsert_user(
+            &pool,
+            999999999,
+            "TestUser",
+            &[],
+            &[],
+            Utc::now() + chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
 
         let session_id = create_session(&pool, 999999999).await.unwrap();
         let session = get_session(&pool, session_id).await.unwrap();
@@ -1955,7 +2161,9 @@ mod tests {
         assert!(session.is_none());
 
         sqlx::query("DELETE FROM users WHERE character_id = 999999999")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1963,12 +2171,25 @@ mod tests {
     async fn test_cleanup_expired_sessions() {
         let pool = test_pool().await;
 
-        upsert_user(&pool, 999999998, "TestUser2", &[], &[], Utc::now() + chrono::Duration::hours(1))
-            .await.unwrap();
+        upsert_user(
+            &pool,
+            999999998,
+            "TestUser2",
+            &[],
+            &[],
+            Utc::now() + chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
 
         let session_id = create_session(&pool, 999999998).await.unwrap();
-        sqlx::query("UPDATE sessions SET expires_at = NOW() - INTERVAL '1 hour' WHERE session_id = $1")
-            .bind(session_id).execute(&pool).await.unwrap();
+        sqlx::query(
+            "UPDATE sessions SET expires_at = NOW() - INTERVAL '1 hour' WHERE session_id = $1",
+        )
+        .bind(session_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let deleted = cleanup_expired_sessions(&pool).await.unwrap();
         assert!(deleted >= 1);
@@ -1977,6 +2198,8 @@ mod tests {
         assert!(session.is_none());
 
         sqlx::query("DELETE FROM users WHERE character_id = 999999998")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

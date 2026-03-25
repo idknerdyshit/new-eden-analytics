@@ -7,7 +7,7 @@ use nea_esi::EsiClient;
 use sqlx::PgPool;
 use tokio::time;
 
-use crate::fitting_utils::{is_fitted_slot, cluster_fittings, resolve_type_name};
+use crate::fitting_utils::{cluster_fittings, is_fitted_slot, resolve_type_name};
 
 const WORKER_STATE_KEY: &str = "profile_aggregation_last_run";
 
@@ -35,25 +35,36 @@ async fn run_cycle(
     // Determine which characters need profile recomputation
     let last_run = nea_db::get_worker_state(pool, WORKER_STATE_KEY).await?;
     let since = match last_run {
-        Some(val) => val.parse::<chrono::DateTime<Utc>>().unwrap_or(Utc::now() - chrono::Duration::days(7)),
+        Some(val) => val
+            .parse::<chrono::DateTime<Utc>>()
+            .unwrap_or(Utc::now() - chrono::Duration::days(7)),
         None => Utc::now() - chrono::Duration::days(7),
     };
 
     let character_ids = nea_db::get_active_character_ids_since(pool, since).await?;
-    tracing::info!(characters = character_ids.len(), "profile_aggregator: recomputing profiles");
+    tracing::info!(
+        characters = character_ids.len(),
+        "profile_aggregator: recomputing profiles"
+    );
 
     let mut computed = 0u64;
     for character_id in &character_ids {
         match compute_profile(pool, *character_id).await {
             Ok(profile) => {
                 if let Err(e) = nea_db::upsert_character_profile(pool, &profile).await {
-                    tracing::warn!(character_id, "profile_aggregator: failed to upsert profile: {e}");
+                    tracing::warn!(
+                        character_id,
+                        "profile_aggregator: failed to upsert profile: {e}"
+                    );
                 } else {
                     computed += 1;
                 }
             }
             Err(e) => {
-                tracing::warn!(character_id, "profile_aggregator: failed to compute profile: {e}");
+                tracing::warn!(
+                    character_id,
+                    "profile_aggregator: failed to compute profile: {e}"
+                );
             }
         }
     }
@@ -61,7 +72,11 @@ async fn run_cycle(
     // Save last run time
     nea_db::set_worker_state(pool, WORKER_STATE_KEY, &Utc::now().to_rfc3339()).await?;
 
-    tracing::info!(computed, total = character_ids.len(), "profile_aggregator: cycle complete");
+    tracing::info!(
+        computed,
+        total = character_ids.len(),
+        "profile_aggregator: cycle complete"
+    );
     Ok(())
 }
 
@@ -78,7 +93,10 @@ async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
     match nea_db::get_stale_unknown_character_ids(pool, 500).await {
         Ok(stale) => {
             if !stale.is_empty() {
-                tracing::info!(count = stale.len(), "profile_aggregator: retrying stale Unknown characters");
+                tracing::info!(
+                    count = stale.len(),
+                    "profile_aggregator: retrying stale Unknown characters"
+                );
                 ids_to_resolve.extend(stale);
             }
         }
@@ -91,7 +109,10 @@ async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
         return;
     }
 
-    tracing::info!(count = ids_to_resolve.len(), "profile_aggregator: resolving character names");
+    tracing::info!(
+        count = ids_to_resolve.len(),
+        "profile_aggregator: resolving character names"
+    );
 
     // Phase 1: Bulk resolve via POST /universe/names/ (up to 1000 per call).
     let mut remaining: std::collections::HashSet<i64> = ids_to_resolve.iter().copied().collect();
@@ -122,7 +143,10 @@ async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
                                 fetched_at: Utc::now(),
                             };
                             if let Err(e) = nea_db::upsert_character(pool, &character).await {
-                                tracing::warn!(character_id = name.id, "profile_aggregator: failed to cache character: {e}");
+                                tracing::warn!(
+                                    character_id = name.id,
+                                    "profile_aggregator: failed to cache character: {e}"
+                                );
                             } else {
                                 resolved += 1;
                             }
@@ -130,7 +154,10 @@ async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
                         Err(e) => {
                             // Bulk said this ID exists but individual lookup failed —
                             // transient error, skip and retry next cycle.
-                            tracing::debug!(character_id = name.id, "profile_aggregator: bulk-confirmed but individual lookup failed: {e}");
+                            tracing::debug!(
+                                character_id = name.id,
+                                "profile_aggregator: bulk-confirmed but individual lookup failed: {e}"
+                            );
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -147,7 +174,10 @@ async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
     // But only for IDs that haven't already been resolved above.
     let not_found_count = remaining.len();
     if not_found_count > 0 {
-        tracing::info!(count = not_found_count, "profile_aggregator: caching placeholders for IDs not found via bulk resolve");
+        tracing::info!(
+            count = not_found_count,
+            "profile_aggregator: caching placeholders for IDs not found via bulk resolve"
+        );
         for character_id in remaining {
             let placeholder = nea_db::Character {
                 character_id,
@@ -160,7 +190,11 @@ async fn resolve_character_names(pool: &PgPool, esi: &EsiClient) {
         }
     }
 
-    tracing::info!(resolved, not_found = not_found_count, "profile_aggregator: character name resolution complete");
+    tracing::info!(
+        resolved,
+        not_found = not_found_count,
+        "profile_aggregator: character name resolution complete"
+    );
 }
 
 async fn compute_profile(
@@ -186,19 +220,17 @@ async fn compute_profile(
     // Solo kills: killmails where this pilot attacked and only 1 non-NPC attacker
     let (solo_kills,): (i64,) = sqlx::query_as(
         r#"
-        WITH my_kills AS (
-            SELECT a.killmail_id, a.kill_time
-            FROM killmail_attackers a
-            WHERE a.character_id = $1
-        ),
-        attacker_counts AS (
-            SELECT mk.killmail_id,
-                   COUNT(*) FILTER (WHERE a2.character_id IS NOT NULL) AS player_count
-            FROM my_kills mk
-            JOIN killmail_attackers a2 ON a2.killmail_id = mk.killmail_id AND a2.kill_time = mk.kill_time
-            GROUP BY mk.killmail_id, mk.kill_time
-        )
-        SELECT COUNT(*) FROM attacker_counts WHERE player_count = 1
+        SELECT COUNT(*)
+        FROM killmail_attackers a
+        WHERE a.character_id = $1
+          AND NOT EXISTS (
+              SELECT 1
+              FROM killmail_attackers a2
+              WHERE a2.killmail_id = a.killmail_id
+                AND a2.kill_time = a.kill_time
+                AND a2.character_id IS NOT NULL
+                AND a2.character_id <> $1
+          )
         "#,
     )
     .bind(character_id)
@@ -208,19 +240,17 @@ async fn compute_profile(
     // Solo losses: killmails where this pilot died and only 1 non-NPC attacker
     let (solo_losses,): (i64,) = sqlx::query_as(
         r#"
-        WITH my_losses AS (
-            SELECT v.killmail_id, v.kill_time
-            FROM killmail_victims v
-            WHERE v.character_id = $1
-        ),
-        attacker_counts AS (
-            SELECT ml.killmail_id,
-                   COUNT(*) FILTER (WHERE a2.character_id IS NOT NULL) AS player_count
-            FROM my_losses ml
-            JOIN killmail_attackers a2 ON a2.killmail_id = ml.killmail_id AND a2.kill_time = ml.kill_time
-            GROUP BY ml.killmail_id, ml.kill_time
-        )
-        SELECT COUNT(*) FROM attacker_counts WHERE player_count = 1
+        SELECT COUNT(*)
+        FROM killmail_victims v
+        WHERE v.character_id = $1
+          AND NOT EXISTS (
+              SELECT 1
+              FROM killmail_attackers a2
+              WHERE a2.killmail_id = v.killmail_id
+                AND a2.kill_time = v.kill_time
+                AND a2.character_id IS NOT NULL
+                AND a2.character_id <> $1
+          )
         "#,
     )
     .bind(character_id)
@@ -430,4 +460,3 @@ async fn compute_common_fits(
 
     Ok(all_fits)
 }
-

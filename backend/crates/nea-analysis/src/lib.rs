@@ -47,10 +47,8 @@ pub mod timeseries {
         prices: &[(NaiveDate, f64)],
     ) -> (Vec<f64>, Vec<f64>) {
         // Build maps
-        let dest_map: BTreeMap<NaiveDate, f64> =
-            destruction.iter().cloned().collect();
-        let price_map: BTreeMap<NaiveDate, f64> =
-            prices.iter().cloned().collect();
+        let dest_map: BTreeMap<NaiveDate, f64> = destruction.iter().cloned().collect();
+        let price_map: BTreeMap<NaiveDate, f64> = prices.iter().cloned().collect();
 
         // Find the overlapping date range
         let min_date = *dest_map
@@ -93,9 +91,7 @@ pub mod timeseries {
             }
             aligned_price.push(last_price.unwrap_or(0.0));
 
-            current = current
-                .succ_opt()
-                .expect("date overflow");
+            current = current.succ_opt().expect("date overflow");
         }
 
         (aligned_dest, aligned_price)
@@ -103,10 +99,7 @@ pub mod timeseries {
 
     /// First-order differencing for stationarity.
     pub fn difference(series: &[f64]) -> Vec<f64> {
-        series
-            .windows(2)
-            .map(|w| w[1] - w[0])
-            .collect()
+        series.windows(2).map(|w| w[1] - w[0]).collect()
     }
 
     /// Z-score normalization. Returns zeros if std_dev is 0.
@@ -187,11 +180,7 @@ pub mod correlation {
         }
 
         let denom = (var_a * var_b).sqrt();
-        if denom == 0.0 {
-            0.0
-        } else {
-            cov / denom
-        }
+        if denom == 0.0 { 0.0 } else { cov / denom }
     }
 
     /// Compute cross-correlation function for lags in [-max_lag, +max_lag].
@@ -200,11 +189,7 @@ pub mod correlation {
     ///   (y is shifted forward, meaning x leads y by k steps)
     /// For negative lag k: correlate x[|k|..n] with y[0..n-|k|]
     ///   (x is shifted forward, meaning y leads x by |k| steps)
-    pub fn cross_correlation(
-        x: &[f64],
-        y: &[f64],
-        max_lag: i32,
-    ) -> Vec<LagCorrelation> {
+    pub fn cross_correlation(x: &[f64], y: &[f64], max_lag: i32) -> Vec<LagCorrelation> {
         let n = x.len().min(y.len());
         tracing::debug!(input_size = n, max_lag, "cross_correlation");
         let mut results = Vec::new();
@@ -281,9 +266,8 @@ pub mod granger {
             None => {
                 // Fall back to SVD-based pseudo-inverse
                 let svd = xtx.svd(true, true);
-                svd.solve(&xty, 1e-12).unwrap_or_else(|_| {
-                    DVector::zeros(x_matrix.ncols())
-                })
+                svd.solve(&xty, 1e-12)
+                    .unwrap_or_else(|_| DVector::zeros(x_matrix.ncols()))
             }
         };
 
@@ -298,11 +282,7 @@ pub mod granger {
     ///
     /// Restricted model:  y[t] = c + a1*y[t-1] + ... + ap*y[t-p]
     /// Unrestricted model: y[t] = c + a1*y[t-1] + ... + ap*y[t-p] + b1*x[t-1] + ... + bp*x[t-p]
-    pub fn granger_causality(
-        y: &[f64],
-        x: &[f64],
-        max_lag: usize,
-    ) -> GrangerResult {
+    pub fn granger_causality(y: &[f64], x: &[f64], max_lag: usize) -> GrangerResult {
         let n_total = y.len().min(x.len());
         let p = max_lag;
 
@@ -369,7 +349,13 @@ pub mod granger {
         };
 
         let significant = p_value < 0.05;
-        tracing::debug!(f_stat, p_value, significant, lags_used = p, "granger_causality");
+        tracing::debug!(
+            f_stat,
+            p_value,
+            significant,
+            lags_used = p,
+            "granger_causality"
+        );
 
         GrangerResult {
             f_statistic: f_stat,
@@ -458,14 +444,8 @@ mod tests {
 
     #[test]
     fn test_align_series_basic() {
-        let dest = vec![
-            (date(2024, 1, 1), 100.0),
-            (date(2024, 1, 3), 200.0),
-        ];
-        let prices = vec![
-            (date(2024, 1, 1), 10.0),
-            (date(2024, 1, 2), 11.0),
-        ];
+        let dest = vec![(date(2024, 1, 1), 100.0), (date(2024, 1, 3), 200.0)];
+        let prices = vec![(date(2024, 1, 1), 10.0), (date(2024, 1, 2), 11.0)];
         let (d, p) = timeseries::align_series(&dest, &prices);
         // Overlapping range: Jan 1 to Jan 2 (min of maxes, max of mins)
         // Wait: dest max is Jan 3, price max is Jan 2 -> overlap ends Jan 2
@@ -474,9 +454,9 @@ mod tests {
         assert_eq!(d.len(), 2);
         assert_eq!(p.len(), 2);
         assert_eq!(d[0], 100.0); // Jan 1
-        assert_eq!(d[1], 0.0);   // Jan 2, missing -> zero fill
-        assert_eq!(p[0], 10.0);  // Jan 1
-        assert_eq!(p[1], 11.0);  // Jan 2
+        assert_eq!(d[1], 0.0); // Jan 2, missing -> zero fill
+        assert_eq!(p[0], 10.0); // Jan 1
+        assert_eq!(p[1], 11.0); // Jan 2
     }
 
     #[test]
@@ -497,12 +477,7 @@ mod tests {
     #[test]
     fn test_prepare_series_too_short() {
         let dest: Vec<(NaiveDate, f64)> = (0..30)
-            .map(|i| {
-                (
-                    date(2024, 1, 1) + chrono::Duration::days(i),
-                    i as f64,
-                )
-            })
+            .map(|i| (date(2024, 1, 1) + chrono::Duration::days(i), i as f64))
             .collect();
         let prices: Vec<(NaiveDate, f64)> = (0..30)
             .map(|i| {
@@ -583,12 +558,11 @@ mod tests {
     fn test_ols_svd_fallback() {
         use nalgebra::{DMatrix, DVector};
         // Rank-deficient matrix: column 2 == column 1
-        let x = DMatrix::from_row_slice(4, 3, &[
-            1.0, 2.0, 2.0,
-            1.0, 3.0, 3.0,
-            1.0, 4.0, 4.0,
-            1.0, 5.0, 5.0,
-        ]);
+        let x = DMatrix::from_row_slice(
+            4,
+            3,
+            &[1.0, 2.0, 2.0, 1.0, 3.0, 3.0, 1.0, 4.0, 4.0, 1.0, 5.0, 5.0],
+        );
         let y = DVector::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
         let rss = granger::ols_residual_ss(&x, &y);
         assert!(rss.is_finite());
@@ -648,14 +622,8 @@ mod tests {
 
     #[test]
     fn test_align_series_disjoint() {
-        let dest = vec![
-            (date(2024, 1, 1), 10.0),
-            (date(2024, 1, 5), 20.0),
-        ];
-        let prices = vec![
-            (date(2024, 6, 1), 100.0),
-            (date(2024, 6, 5), 200.0),
-        ];
+        let dest = vec![(date(2024, 1, 1), 10.0), (date(2024, 1, 5), 20.0)];
+        let prices = vec![(date(2024, 6, 1), 100.0), (date(2024, 6, 5), 200.0)];
         let (d, p) = timeseries::align_series(&dest, &prices);
         assert!(d.is_empty());
         assert!(p.is_empty());
@@ -670,9 +638,7 @@ mod tests {
             (date(2024, 1, 2), 20.0),
             (date(2024, 1, 3), 30.0),
         ];
-        let prices = vec![
-            (date(2024, 1, 3), 100.0),
-        ];
+        let prices = vec![(date(2024, 1, 3), 100.0)];
         // Overlap: max(Jan1,Jan3)=Jan3, min(Jan3,Jan3)=Jan3 → single day
         let (d, p) = timeseries::align_series(&dest, &prices);
         assert_eq!(d.len(), 1);
@@ -705,7 +671,12 @@ mod tests {
             .map(|i| (date(2024, 1, 1) + chrono::Duration::days(i), i as f64))
             .collect();
         let prices: Vec<(NaiveDate, f64)> = (0..61)
-            .map(|i| (date(2024, 1, 1) + chrono::Duration::days(i), 100.0 + i as f64))
+            .map(|i| {
+                (
+                    date(2024, 1, 1) + chrono::Duration::days(i),
+                    100.0 + i as f64,
+                )
+            })
             .collect();
         assert!(timeseries::prepare_series(&dest, &prices).is_some());
     }

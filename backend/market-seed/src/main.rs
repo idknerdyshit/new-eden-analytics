@@ -55,9 +55,15 @@ async fn fetch_and_store(
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
     let entries = match esi.market_history(THE_FORGE, type_id).await {
         Ok(e) => e,
-        Err(EsiError::Api { status: 400, ref message }) if message.contains("not tradable") => {
+        Err(EsiError::Api {
+            status: 400,
+            ref message,
+        }) if message.contains("not tradable") => {
             nea_db::mark_type_non_tradable(pool, type_id).await?;
-            tracing::info!(type_id, "marked type as non-tradable, will skip in future cycles");
+            tracing::info!(
+                type_id,
+                "marked type as non-tradable, will skip in future cycles"
+            );
             return Ok(0);
         }
         Err(e) => return Err(e.into()),
@@ -81,8 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("market-seed starting");
 
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = nea_db::create_pool(&database_url).await?;
     let esi = Arc::new(EsiClient::with_user_agent(
         "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)",
@@ -94,7 +99,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    info!(types = type_ids.len(), "fetching market history from ESI (The Forge)");
+    info!(
+        types = type_ids.len(),
+        "fetching market history from ESI (The Forge)"
+    );
 
     let semaphore = Arc::new(Semaphore::new(CONCURRENCY));
     let mut handles = Vec::with_capacity(type_ids.len());
@@ -140,12 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    info!(
-        fetched,
-        inserted,
-        errors,
-        "market-seed complete"
-    );
+    info!(fetched, inserted, errors, "market-seed complete");
 
     Ok(())
 }
