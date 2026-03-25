@@ -7,6 +7,14 @@ services:
 
   timescaledb:
     image: timescale/timescaledb:latest-pg16
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=timescaledb,pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - work_mem=32MB
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nea}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nea_dev}
