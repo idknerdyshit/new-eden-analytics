@@ -217,40 +217,42 @@ async fn compute_profile(
     .fetch_one(pool)
     .await?;
 
-    // Solo kills: killmails where this pilot attacked and only 1 non-NPC attacker
+    // Solo kills: killmails where this pilot attacked and no other non-NPC attacker
     let (solo_kills,): (i64,) = sqlx::query_as(
         r#"
         SELECT COUNT(*)
-        FROM killmail_attackers a
-        WHERE a.character_id = $1
-          AND NOT EXISTS (
-              SELECT 1
-              FROM killmail_attackers a2
-              WHERE a2.killmail_id = a.killmail_id
-                AND a2.kill_time = a.kill_time
-                AND a2.character_id IS NOT NULL
-                AND a2.character_id <> $1
-          )
+        FROM (
+            SELECT a.killmail_id, a.kill_time
+            FROM killmail_attackers a
+            WHERE a.character_id = $1
+        ) me
+        JOIN LATERAL (
+            SELECT COUNT(*) FILTER (WHERE a2.character_id IS NOT NULL AND a2.character_id <> $1) AS others
+            FROM killmail_attackers a2
+            WHERE a2.killmail_id = me.killmail_id
+              AND a2.kill_time = me.kill_time
+        ) counts ON counts.others = 0
         "#,
     )
     .bind(character_id)
     .fetch_one(pool)
     .await?;
 
-    // Solo losses: killmails where this pilot died and only 1 non-NPC attacker
+    // Solo losses: killmails where this pilot died and no other non-NPC attacker
     let (solo_losses,): (i64,) = sqlx::query_as(
         r#"
         SELECT COUNT(*)
-        FROM killmail_victims v
-        WHERE v.character_id = $1
-          AND NOT EXISTS (
-              SELECT 1
-              FROM killmail_attackers a2
-              WHERE a2.killmail_id = v.killmail_id
-                AND a2.kill_time = v.kill_time
-                AND a2.character_id IS NOT NULL
-                AND a2.character_id <> $1
-          )
+        FROM (
+            SELECT v.killmail_id, v.kill_time
+            FROM killmail_victims v
+            WHERE v.character_id = $1
+        ) me
+        JOIN LATERAL (
+            SELECT COUNT(*) FILTER (WHERE a2.character_id IS NOT NULL AND a2.character_id <> $1) AS others
+            FROM killmail_attackers a2
+            WHERE a2.killmail_id = me.killmail_id
+              AND a2.kill_time = me.kill_time
+        ) counts ON counts.others = 0
         "#,
     )
     .bind(character_id)

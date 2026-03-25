@@ -19,6 +19,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-nea}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nea_dev}
       POSTGRES_DB: ${POSTGRES_DB:-new_eden_analytics}
+    shm_size: 256mb
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
