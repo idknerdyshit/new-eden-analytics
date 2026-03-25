@@ -13,6 +13,16 @@ use crate::fitting_utils::{cluster_fittings, is_fitted_slot, resolve_type_name};
 const WORKER_STATE_KEY: &str = "doctrine_aggregation_last_run";
 const WINDOWS: &[i32] = &[7, 30, 90];
 const DEFAULT_MIN_KILLS_FOR_PROFILE: i64 = 15;
+const ENGAGEMENT_WINDOW_MINUTES: i64 = 15;
+const MIN_ENGAGEMENT_PILOTS: usize = 5;
+const MIN_DOCTRINE_ENGAGEMENTS: usize = 5;
+const MIN_DOCTRINE_DISTINCT_PILOTS: usize = 8;
+const CLUSTER_SIMILARITY_THRESHOLD: f64 = 0.5;
+const DOCTRINE_CORE_PRESENCE_THRESHOLD: f64 = 0.55;
+const POST_MERGE_JACCARD_THRESHOLD: f64 = 0.7;
+const POST_MERGE_OVERLAP_THRESHOLD: f64 = 0.85;
+const SUPPORT_PRESENCE_THRESHOLD: f64 = 0.25;
+const MIN_SUPPORT_ENGAGEMENTS: usize = 2;
 
 fn min_kills_for_profile() -> i64 {
     std::env::var("DOCTRINE_MIN_KILLS")
@@ -437,11 +447,58 @@ struct ShipFitData {
 
 /// An engagement is a cluster of kills in the same solar system within a
 /// short time window, representing a single fleet fight.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum PilotRef {
+    Known(i64),
+    Unknown(u64),
+}
+
+#[derive(Clone, Debug)]
 struct Engagement {
     kill_ids: Vec<i64>,
-    ship_types: HashSet<i32>,
-    pilot_count: u32,
+    signature_ship_types: HashSet<i32>,
+    ship_type_counts: HashMap<i32, usize>,
+    pilot_ids: HashSet<PilotRef>,
+    start_time: chrono::DateTime<Utc>,
+}
+
+impl Engagement {
+    fn pilot_count(&self) -> usize {
+        self.pilot_ids.len()
+    }
+}
+
+#[derive(Clone)]
+struct AttackRow {
+    killmail_id: i64,
+    ship_type_id: i32,
+    kill_time: chrono::DateTime<Utc>,
     system_id: i32,
+    character_id: Option<i64>,
+}
+
+struct KillInfo {
+    time: chrono::DateTime<Utc>,
+    system_id: i32,
+    ship_pilots: HashMap<i32, HashSet<PilotRef>>,
+    pilot_ids: HashSet<PilotRef>,
+}
+
+#[derive(Clone, Debug)]
+struct DoctrineCluster {
+    engagement_indices: Vec<usize>,
+    support_ship_types: HashSet<i32>,
+}
+
+#[derive(Clone, Debug)]
+struct DoctrineClusterStats {
+    core_ship_types: HashSet<i32>,
+    ship_presence: HashMap<i32, usize>,
+    ship_weight: HashMap<i32, usize>,
+    kill_ids: HashSet<i64>,
+    distinct_pilots: HashSet<PilotRef>,
+    engagement_count: usize,
+    mean_similarity: f64,
 }
 
 async fn compute_doctrines(
@@ -453,95 +510,47 @@ async fn compute_doctrines(
     // ── Step 1: Fetch attacker data with location ────────────────────
     let query = format!(
         r#"
-        SELECT a.killmail_id, a.ship_type_id, a.kill_time, k.solar_system_id
+        SELECT a.killmail_id, a.ship_type_id, a.kill_time, k.solar_system_id, a.character_id
         FROM killmail_attackers a
         JOIN killmails k ON a.killmail_id = k.killmail_id AND a.kill_time = k.kill_time
+        JOIN sde_types s ON a.ship_type_id = s.type_id
         WHERE a.{col} = $1
           AND a.kill_time >= NOW() - $2 * INTERVAL '1 day'
           AND a.ship_type_id > 0
           AND k.solar_system_id IS NOT NULL
+          AND s.category_id = 6
+          AND s.group_id IS DISTINCT FROM 29
+          AND s.published = TRUE
         ORDER BY k.solar_system_id, a.kill_time
         "#,
         col = column
     );
-    let attack_rows: Vec<(i64, i32, chrono::DateTime<Utc>, i32)> = sqlx::query_as(&query)
-        .bind(entity_id)
-        .bind(window_days)
-        .fetch_all(pool)
-        .await?;
+    let attack_rows: Vec<(i64, i32, chrono::DateTime<Utc>, i32, Option<i64>)> =
+        sqlx::query_as(&query)
+            .bind(entity_id)
+            .bind(window_days)
+            .fetch_all(pool)
+            .await?;
 
     if attack_rows.is_empty() {
         return Ok(Vec::new());
     }
 
+    let attack_rows: Vec<AttackRow> = attack_rows
+        .into_iter()
+        .map(
+            |(killmail_id, ship_type_id, kill_time, system_id, character_id)| AttackRow {
+                killmail_id,
+                ship_type_id,
+                kill_time,
+                system_id,
+                character_id,
+            },
+        )
+        .collect();
+
     // ── Step 2: Group kills into engagements ─────────────────────────
-    // An engagement = kills in the same system within ±15 min of each other.
-    // First, collect per-killmail data.
-    struct KillInfo {
-        time: chrono::DateTime<Utc>,
-        system_id: i32,
-        ship_types: HashSet<i32>,
-        pilot_count: u32,
-    }
-    let mut kill_map: HashMap<i64, KillInfo> = HashMap::new();
-    for (km_id, ship_type_id, kill_time, system_id) in &attack_rows {
-        let entry = kill_map.entry(*km_id).or_insert_with(|| KillInfo {
-            time: *kill_time,
-            system_id: *system_id,
-            ship_types: HashSet::new(),
-            pilot_count: 0,
-        });
-        entry.ship_types.insert(*ship_type_id);
-        entry.pilot_count += 1;
-    }
-
-    // Sort kills by (system, time) then merge into engagements
-    let mut kills_sorted: Vec<(i64, &KillInfo)> =
-        kill_map.iter().map(|(id, info)| (*id, info)).collect();
-    kills_sorted.sort_by(|a, b| {
-        a.1.system_id
-            .cmp(&b.1.system_id)
-            .then(a.1.time.cmp(&b.1.time))
-    });
-
-    let engagement_window = chrono::Duration::minutes(15);
-    let mut engagements: Vec<Engagement> = Vec::new();
-
-    for (km_id, info) in &kills_sorted {
-        let merged = engagements.last_mut().and_then(|eng| {
-            if eng.system_id == info.system_id
-                && (info.time
-                    - eng
-                        .kill_ids
-                        .iter()
-                        .filter_map(|id| kill_map.get(id))
-                        .map(|k| k.time)
-                        .max()
-                        .unwrap_or(info.time))
-                .abs()
-                    <= engagement_window
-            {
-                Some(eng)
-            } else {
-                None
-            }
-        });
-        if let Some(eng) = merged {
-            eng.kill_ids.push(*km_id);
-            eng.ship_types.extend(&info.ship_types);
-            eng.pilot_count += info.pilot_count;
-        } else {
-            engagements.push(Engagement {
-                kill_ids: vec![*km_id],
-                ship_types: info.ship_types.clone(),
-                pilot_count: info.pilot_count,
-                system_id: info.system_id,
-            });
-        }
-    }
-
-    // Only keep engagements with ≥5 entity pilots (real fleet fights)
-    engagements.retain(|e| e.pilot_count >= 5);
+    let engagements = build_engagements(&attack_rows);
 
     if engagements.is_empty() {
         return Ok(Vec::new());
@@ -554,105 +563,18 @@ async fn compute_doctrines(
     );
 
     // ── Step 3: Cluster engagements by composition similarity ────────
-    // Greedy seed-expansion: pick the largest unassigned engagement as seed,
-    // find all engagements with Jaccard ≥ 0.4 to the seed's ship-type set,
-    // then extract core ship types present in ≥30% of cluster engagements.
-    let mut assigned = vec![false; engagements.len()];
-    let mut doctrine_groups: Vec<Vec<i32>> = Vec::new();
-    // Track which engagements belong to each doctrine for support ship assignment
-    let mut doctrine_engagement_kills: Vec<HashSet<i64>> = Vec::new();
-
-    // Sort indices by pilot_count descending for seed selection
-    let mut indices: Vec<usize> = (0..engagements.len()).collect();
-    indices.sort_by(|a, b| {
-        engagements[*b]
-            .pilot_count
-            .cmp(&engagements[*a].pilot_count)
-    });
-
-    for &seed_idx in &indices {
-        if assigned[seed_idx] {
-            continue;
-        }
-        assigned[seed_idx] = true;
-
-        let seed_types = &engagements[seed_idx].ship_types;
-        let mut cluster_indices = vec![seed_idx];
-
-        for &j in &indices {
-            if assigned[j] {
-                continue;
-            }
-            let jaccard = jaccard_i32(seed_types, &engagements[j].ship_types);
-            if jaccard >= 0.4 {
-                assigned[j] = true;
-                cluster_indices.push(j);
-            }
-        }
-
-        // Need ≥5 engagements to call it a recurring doctrine
-        if cluster_indices.len() < 5 {
-            continue;
-        }
-
-        // Extract core ship types: present in ≥30% of cluster engagements
-        let mut type_counts: HashMap<i32, usize> = HashMap::new();
-        for &ci in &cluster_indices {
-            for &tid in &engagements[ci].ship_types {
-                *type_counts.entry(tid).or_insert(0) += 1;
-            }
-        }
-        let threshold = (cluster_indices.len() as f64 * 0.3).ceil() as usize;
-        let core_types: Vec<i32> = type_counts
-            .into_iter()
-            .filter(|(_, count)| *count >= threshold)
-            .map(|(tid, _)| tid)
-            .collect();
-
-        if core_types.len() >= 2 {
-            // Collect all kill IDs for this doctrine's engagements
-            let kills: HashSet<i64> = cluster_indices
-                .iter()
-                .flat_map(|&ci| engagements[ci].kill_ids.iter().copied())
-                .collect();
-            doctrine_engagement_kills.push(kills);
-            doctrine_groups.push(core_types);
-        }
-    }
+    let mut doctrine_clusters = cluster_doctrines(&engagements);
+    doctrine_clusters = merge_close_doctrine_clusters(doctrine_clusters, &engagements);
 
     // ── Step 4: Detect support ships via temporal-spatial correlation ─
     let support_ships = detect_support_ships(pool, column, entity_id, window_days).await;
-
-    for (support_type_id, nearby_kill_ids) in &support_ships {
-        if doctrine_groups.iter().any(|g| g.contains(support_type_id)) {
-            continue;
-        }
-
-        // Find which doctrine group has the most overlap with this support
-        // ship's nearby kills
-        let mut best_group_idx: Option<usize> = None;
-        let mut best_overlap = 0usize;
-        for (gi, kills) in doctrine_engagement_kills.iter().enumerate() {
-            let overlap = nearby_kill_ids.intersection(kills).count();
-            if overlap > best_overlap {
-                best_overlap = overlap;
-                best_group_idx = Some(gi);
-            }
-        }
-
-        if let Some(gi) = best_group_idx {
-            let group_total = doctrine_engagement_kills[gi].len();
-            let threshold = (group_total as f64 * 0.05).max(3.0) as usize;
-            if best_overlap >= threshold {
-                doctrine_groups[gi].push(*support_type_id);
-            }
-        }
-    }
+    assign_support_ships(&mut doctrine_clusters, &engagements, &support_ships);
 
     // ── Step 5: Compute per-ship fitting data from losses ────────────
     let mut all_doctrine_ship_ids: HashSet<i32> = HashSet::new();
-    for group in &doctrine_groups {
-        for tid in group {
+    for cluster in &doctrine_clusters {
+        let stats = doctrine_cluster_stats(cluster, &engagements);
+        for tid in ordered_doctrine_ship_ids(cluster, &stats) {
             all_doctrine_ship_ids.insert(*tid);
         }
     }
@@ -668,17 +590,20 @@ async fn compute_doctrines(
 
     // ── Step 6: Assemble output ──────────────────────────────────────
     // Batch resolve names for ships without fit data
-    let unresolved_ids: Vec<i32> = doctrine_groups
+    let mut unresolved_ids: Vec<i32> = all_doctrine_ship_ids
         .iter()
-        .flat_map(|g| g.iter())
         .filter(|tid| !fit_data.contains_key(tid))
         .copied()
         .collect();
+    unresolved_ids.sort_unstable();
+    unresolved_ids.dedup();
     let extra_names = nea_db::get_type_names(pool, &unresolved_ids).await?;
 
     let mut result = Vec::new();
-    for group in &doctrine_groups {
-        let ships: Vec<serde_json::Value> = group
+    for cluster in &doctrine_clusters {
+        let stats = doctrine_cluster_stats(cluster, &engagements);
+        let coverage_pct = stats.engagement_count as f64 / engagements.len() as f64 * 100.0;
+        let ships: Vec<serde_json::Value> = ordered_doctrine_ship_ids(cluster, &stats)
             .iter()
             .map(|&tid| {
                 if let Some(d) = fit_data.get(&tid) {
@@ -693,7 +618,7 @@ async fn compute_doctrines(
                 } else {
                     serde_json::json!({
                         "ship_type_id": tid,
-                        "ship_name": resolve_type_name(&extra_names, tid),
+                        "ship_name": resolve_type_name(&extra_names, *tid),
                         "canonical_fit": [],
                         "variants": [],
                         "occurrences": 0,
@@ -702,7 +627,13 @@ async fn compute_doctrines(
                 }
             })
             .collect();
-        result.push(serde_json::json!({ "ships": ships }));
+        result.push(serde_json::json!({
+            "ships": ships,
+            "engagement_count": stats.engagement_count,
+            "distinct_pilot_count": stats.distinct_pilots.len(),
+            "coverage_pct": (coverage_pct * 10.0).round() / 10.0,
+            "mean_similarity": (stats.mean_similarity * 1000.0).round() / 1000.0,
+        }));
     }
 
     Ok(result)
@@ -718,6 +649,600 @@ fn jaccard_i32(a: &HashSet<i32>, b: &HashSet<i32>) -> f64 {
         0.0
     } else {
         intersection as f64 / union as f64
+    }
+}
+
+fn build_engagements(rows: &[AttackRow]) -> Vec<Engagement> {
+    let mut kill_map: HashMap<i64, KillInfo> = HashMap::new();
+    let mut unknown_seq = 0u64;
+
+    for row in rows {
+        let pilot_ref = match row.character_id {
+            Some(character_id) => PilotRef::Known(character_id),
+            None => {
+                unknown_seq += 1;
+                PilotRef::Unknown(unknown_seq)
+            }
+        };
+        let entry = kill_map.entry(row.killmail_id).or_insert_with(|| KillInfo {
+            time: row.kill_time,
+            system_id: row.system_id,
+            ship_pilots: HashMap::new(),
+            pilot_ids: HashSet::new(),
+        });
+        entry.pilot_ids.insert(pilot_ref);
+        entry
+            .ship_pilots
+            .entry(row.ship_type_id)
+            .or_default()
+            .insert(pilot_ref);
+    }
+
+    let mut kills_sorted: Vec<(i64, &KillInfo)> =
+        kill_map.iter().map(|(id, info)| (*id, info)).collect();
+    kills_sorted.sort_by(|a, b| {
+        a.1.system_id
+            .cmp(&b.1.system_id)
+            .then(a.1.time.cmp(&b.1.time))
+    });
+
+    let engagement_window = chrono::Duration::minutes(ENGAGEMENT_WINDOW_MINUTES);
+    let mut raw_engagements: Vec<KillInfoEngagement> = Vec::new();
+
+    for (killmail_id, kill_info) in kills_sorted {
+        let can_merge = raw_engagements.last().is_some_and(|engagement| {
+            engagement.system_id == kill_info.system_id
+                && kill_info.time - engagement.start_time <= engagement_window
+        });
+
+        if can_merge {
+            let engagement = raw_engagements.last_mut().expect("last engagement exists");
+            engagement.kill_ids.push(killmail_id);
+            engagement.end_time = kill_info.time;
+            engagement
+                .pilot_ids
+                .extend(kill_info.pilot_ids.iter().copied());
+            for (&ship_type_id, pilots) in &kill_info.ship_pilots {
+                engagement
+                    .ship_pilots
+                    .entry(ship_type_id)
+                    .or_default()
+                    .extend(pilots.iter().copied());
+            }
+            continue;
+        }
+
+        raw_engagements.push(KillInfoEngagement {
+            kill_ids: vec![killmail_id],
+            system_id: kill_info.system_id,
+            start_time: kill_info.time,
+            end_time: kill_info.time,
+            ship_pilots: kill_info.ship_pilots.clone(),
+            pilot_ids: kill_info.pilot_ids.clone(),
+        });
+    }
+
+    raw_engagements
+        .into_iter()
+        .filter_map(finalize_engagement)
+        .collect()
+}
+
+struct KillInfoEngagement {
+    kill_ids: Vec<i64>,
+    system_id: i32,
+    start_time: chrono::DateTime<Utc>,
+    end_time: chrono::DateTime<Utc>,
+    ship_pilots: HashMap<i32, HashSet<PilotRef>>,
+    pilot_ids: HashSet<PilotRef>,
+}
+
+fn finalize_engagement(raw: KillInfoEngagement) -> Option<Engagement> {
+    if raw.pilot_ids.len() < MIN_ENGAGEMENT_PILOTS {
+        return None;
+    }
+
+    let signature_threshold = ((raw.pilot_ids.len() as f64) * 0.1).ceil() as usize;
+    let signature_threshold = signature_threshold.max(2);
+
+    let ship_type_counts: HashMap<i32, usize> = raw
+        .ship_pilots
+        .iter()
+        .map(|(&ship_type_id, pilots)| (ship_type_id, pilots.len()))
+        .collect();
+    let signature_ship_types: HashSet<i32> = ship_type_counts
+        .iter()
+        .filter(|(_, count)| **count >= signature_threshold)
+        .map(|(&ship_type_id, _)| ship_type_id)
+        .collect();
+
+    if signature_ship_types.len() < 2 {
+        return None;
+    }
+
+    Some(Engagement {
+        kill_ids: raw.kill_ids,
+        signature_ship_types,
+        ship_type_counts,
+        pilot_ids: raw.pilot_ids,
+        start_time: raw.start_time,
+    })
+}
+
+fn cluster_doctrines(engagements: &[Engagement]) -> Vec<DoctrineCluster> {
+    let mut clusters: Vec<DoctrineCluster> = Vec::new();
+    let mut indices: Vec<usize> = (0..engagements.len()).collect();
+    indices.sort_by(|a, b| {
+        engagements[*b]
+            .pilot_count()
+            .cmp(&engagements[*a].pilot_count())
+            .then(engagements[*a].start_time.cmp(&engagements[*b].start_time))
+    });
+
+    for engagement_idx in indices {
+        let signature = &engagements[engagement_idx].signature_ship_types;
+        let mut best_cluster_idx: Option<usize> = None;
+        let mut best_similarity = 0.0;
+
+        for (cluster_idx, cluster) in clusters.iter().enumerate() {
+            let stats = doctrine_cluster_stats(cluster, engagements);
+            let similarity = jaccard_i32(signature, &stats.core_ship_types);
+            if similarity >= CLUSTER_SIMILARITY_THRESHOLD && similarity > best_similarity {
+                best_similarity = similarity;
+                best_cluster_idx = Some(cluster_idx);
+            }
+        }
+
+        if let Some(cluster_idx) = best_cluster_idx {
+            clusters[cluster_idx]
+                .engagement_indices
+                .push(engagement_idx);
+        } else {
+            clusters.push(DoctrineCluster {
+                engagement_indices: vec![engagement_idx],
+                support_ship_types: HashSet::new(),
+            });
+        }
+    }
+
+    let mut qualified: Vec<DoctrineCluster> = clusters
+        .into_iter()
+        .filter(|cluster| doctrine_cluster_qualifies(cluster, engagements))
+        .collect();
+    qualified.sort_by(|a, b| compare_clusters(a, b, engagements));
+    qualified
+}
+
+fn doctrine_cluster_qualifies(cluster: &DoctrineCluster, engagements: &[Engagement]) -> bool {
+    let stats = doctrine_cluster_stats(cluster, engagements);
+    stats.engagement_count >= MIN_DOCTRINE_ENGAGEMENTS
+        && stats.distinct_pilots.len() >= MIN_DOCTRINE_DISTINCT_PILOTS
+        && stats.core_ship_types.len() >= 2
+}
+
+fn doctrine_cluster_stats(
+    cluster: &DoctrineCluster,
+    engagements: &[Engagement],
+) -> DoctrineClusterStats {
+    let mut ship_presence: HashMap<i32, usize> = HashMap::new();
+    let mut ship_weight: HashMap<i32, usize> = HashMap::new();
+    let mut kill_ids: HashSet<i64> = HashSet::new();
+    let mut distinct_pilots: HashSet<PilotRef> = HashSet::new();
+
+    for &engagement_idx in &cluster.engagement_indices {
+        let engagement = &engagements[engagement_idx];
+        kill_ids.extend(engagement.kill_ids.iter().copied());
+        distinct_pilots.extend(engagement.pilot_ids.iter().copied());
+        for &ship_type_id in &engagement.signature_ship_types {
+            *ship_presence.entry(ship_type_id).or_insert(0) += 1;
+            *ship_weight.entry(ship_type_id).or_insert(0) += engagement
+                .ship_type_counts
+                .get(&ship_type_id)
+                .copied()
+                .unwrap_or(0);
+        }
+    }
+
+    let engagement_count = cluster.engagement_indices.len();
+    let threshold = ((engagement_count as f64) * DOCTRINE_CORE_PRESENCE_THRESHOLD).ceil() as usize;
+    let threshold = threshold.max(1);
+    let core_ship_types: HashSet<i32> = ship_presence
+        .iter()
+        .filter(|(_, count)| **count >= threshold)
+        .map(|(&ship_type_id, _)| ship_type_id)
+        .collect();
+    let mean_similarity = if engagement_count == 0 || core_ship_types.is_empty() {
+        0.0
+    } else {
+        cluster
+            .engagement_indices
+            .iter()
+            .map(|&engagement_idx| {
+                jaccard_i32(
+                    &engagements[engagement_idx].signature_ship_types,
+                    &core_ship_types,
+                )
+            })
+            .sum::<f64>()
+            / engagement_count as f64
+    };
+
+    DoctrineClusterStats {
+        core_ship_types,
+        ship_presence,
+        ship_weight,
+        kill_ids,
+        distinct_pilots,
+        engagement_count,
+        mean_similarity,
+    }
+}
+
+fn compare_clusters(
+    a: &DoctrineCluster,
+    b: &DoctrineCluster,
+    engagements: &[Engagement],
+) -> std::cmp::Ordering {
+    let stats_a = doctrine_cluster_stats(a, engagements);
+    let stats_b = doctrine_cluster_stats(b, engagements);
+    stats_b
+        .engagement_count
+        .cmp(&stats_a.engagement_count)
+        .then(
+            stats_b
+                .distinct_pilots
+                .len()
+                .cmp(&stats_a.distinct_pilots.len()),
+        )
+        .then_with(|| {
+            stats_b
+                .mean_similarity
+                .partial_cmp(&stats_a.mean_similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .then(
+            stats_b
+                .core_ship_types
+                .len()
+                .cmp(&stats_a.core_ship_types.len()),
+        )
+}
+
+fn merge_close_doctrine_clusters(
+    mut clusters: Vec<DoctrineCluster>,
+    engagements: &[Engagement],
+) -> Vec<DoctrineCluster> {
+    let mut merged_any = true;
+    while merged_any {
+        merged_any = false;
+        'outer: for i in 0..clusters.len() {
+            for j in (i + 1)..clusters.len() {
+                let a_stats = doctrine_cluster_stats(&clusters[i], engagements);
+                let b_stats = doctrine_cluster_stats(&clusters[j], engagements);
+                if should_merge_cluster_stats(&a_stats, &b_stats) {
+                    let mut merged_indices: Vec<usize> = clusters[i]
+                        .engagement_indices
+                        .iter()
+                        .chain(clusters[j].engagement_indices.iter())
+                        .copied()
+                        .collect();
+                    merged_indices.sort_unstable();
+                    merged_indices.dedup();
+
+                    let mut merged_support = clusters[i].support_ship_types.clone();
+                    merged_support.extend(clusters[j].support_ship_types.iter().copied());
+
+                    clusters[i] = DoctrineCluster {
+                        engagement_indices: merged_indices,
+                        support_ship_types: merged_support,
+                    };
+                    clusters.remove(j);
+                    merged_any = true;
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    let mut qualified: Vec<DoctrineCluster> = clusters
+        .into_iter()
+        .filter(|cluster| doctrine_cluster_qualifies(cluster, engagements))
+        .collect();
+    qualified.sort_by(|a, b| compare_clusters(a, b, engagements));
+    qualified
+}
+
+fn should_merge_cluster_stats(a: &DoctrineClusterStats, b: &DoctrineClusterStats) -> bool {
+    if a.core_ship_types.is_empty() || b.core_ship_types.is_empty() {
+        return false;
+    }
+    let jaccard = jaccard_i32(&a.core_ship_types, &b.core_ship_types);
+    let intersection = a.core_ship_types.intersection(&b.core_ship_types).count();
+    let min_len = a.core_ship_types.len().min(b.core_ship_types.len());
+    let overlap = if min_len == 0 {
+        0.0
+    } else {
+        intersection as f64 / min_len as f64
+    };
+    jaccard >= POST_MERGE_JACCARD_THRESHOLD || overlap >= POST_MERGE_OVERLAP_THRESHOLD
+}
+
+fn assign_support_ships(
+    clusters: &mut [DoctrineCluster],
+    engagements: &[Engagement],
+    support_ships: &[(i32, HashSet<i64>)],
+) {
+    for (support_type_id, nearby_kill_ids) in support_ships {
+        let mut best_cluster_idx: Option<usize> = None;
+        let mut best_presence = 0usize;
+        let mut best_overlap = 0usize;
+
+        for (cluster_idx, cluster) in clusters.iter().enumerate() {
+            let stats = doctrine_cluster_stats(cluster, engagements);
+            if stats.core_ship_types.contains(support_type_id) {
+                best_cluster_idx = None;
+                best_presence = 0;
+                break;
+            }
+
+            let engagement_presence = cluster
+                .engagement_indices
+                .iter()
+                .filter(|&&engagement_idx| {
+                    engagements[engagement_idx]
+                        .kill_ids
+                        .iter()
+                        .any(|killmail_id| nearby_kill_ids.contains(killmail_id))
+                })
+                .count();
+            let overlap_kills = stats.kill_ids.intersection(nearby_kill_ids).count();
+
+            if engagement_presence > best_presence
+                || (engagement_presence == best_presence && overlap_kills > best_overlap)
+            {
+                best_presence = engagement_presence;
+                best_overlap = overlap_kills;
+                best_cluster_idx = Some(cluster_idx);
+            }
+        }
+
+        let Some(cluster_idx) = best_cluster_idx else {
+            continue;
+        };
+
+        let cluster_size = clusters[cluster_idx].engagement_indices.len();
+        let threshold = ((cluster_size as f64) * SUPPORT_PRESENCE_THRESHOLD).ceil() as usize;
+        let threshold = threshold.max(MIN_SUPPORT_ENGAGEMENTS);
+        if best_presence >= threshold {
+            clusters[cluster_idx]
+                .support_ship_types
+                .insert(*support_type_id);
+        }
+    }
+}
+
+fn ordered_doctrine_ship_ids<'a>(
+    cluster: &'a DoctrineCluster,
+    stats: &'a DoctrineClusterStats,
+) -> Vec<&'a i32> {
+    let mut core_ship_ids: Vec<&i32> = stats.core_ship_types.iter().collect();
+    core_ship_ids.sort_by(|a, b| {
+        stats.ship_presence[*b]
+            .cmp(&stats.ship_presence[*a])
+            .then(stats.ship_weight[*b].cmp(&stats.ship_weight[*a]))
+            .then(a.cmp(b))
+    });
+
+    let mut support_ship_ids: Vec<&i32> = cluster.support_ship_types.iter().collect();
+    support_ship_ids.sort();
+
+    core_ship_ids.extend(support_ship_ids);
+    core_ship_ids
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    fn ts(total_minutes: u32) -> chrono::DateTime<Utc> {
+        let hour = total_minutes / 60;
+        let minute = total_minutes % 60;
+        Utc.with_ymd_and_hms(2026, 1, 1, hour, minute, 0)
+            .single()
+            .expect("valid timestamp")
+    }
+
+    fn attack_rows(
+        killmail_id: i64,
+        minute: u32,
+        system_id: i32,
+        ships: &[(i64, i32)],
+    ) -> Vec<AttackRow> {
+        ships
+            .iter()
+            .map(|(character_id, ship_type_id)| AttackRow {
+                killmail_id,
+                ship_type_id: *ship_type_id,
+                kill_time: ts(minute),
+                system_id,
+                character_id: Some(*character_id),
+            })
+            .collect()
+    }
+
+    fn engagement(
+        killmail_id: i64,
+        minute: u32,
+        system_id: i32,
+        ships: &[(i64, i32)],
+    ) -> Engagement {
+        build_engagements(&attack_rows(killmail_id, minute, system_id, ships))
+            .into_iter()
+            .next()
+            .expect("expected engagement")
+    }
+
+    #[test]
+    fn repeated_small_gang_does_not_create_engagement() {
+        let mut rows = Vec::new();
+        rows.extend(attack_rows(
+            1,
+            0,
+            30000142,
+            &[(11, 1001), (12, 1002), (13, 1003), (14, 1004)],
+        ));
+        rows.extend(attack_rows(
+            2,
+            5,
+            30000142,
+            &[(11, 1001), (12, 1002), (13, 1003), (14, 1004)],
+        ));
+
+        let engagements = build_engagements(&rows);
+        assert!(engagements.is_empty());
+    }
+
+    #[test]
+    fn engagement_window_does_not_chain_indefinitely() {
+        let mut rows = Vec::new();
+        rows.extend(attack_rows(
+            1,
+            0,
+            30000142,
+            &[
+                (11, 1001),
+                (12, 1001),
+                (13, 1002),
+                (14, 1002),
+                (15, 1003),
+                (16, 1003),
+            ],
+        ));
+        rows.extend(attack_rows(
+            2,
+            10,
+            30000142,
+            &[
+                (21, 1001),
+                (22, 1001),
+                (23, 1002),
+                (24, 1002),
+                (25, 1003),
+                (26, 1003),
+            ],
+        ));
+        rows.extend(attack_rows(
+            3,
+            20,
+            30000142,
+            &[
+                (31, 1001),
+                (32, 1001),
+                (33, 1002),
+                (34, 1002),
+                (35, 1003),
+                (36, 1003),
+            ],
+        ));
+
+        let engagements = build_engagements(&rows);
+        assert_eq!(engagements.len(), 2);
+        assert_eq!(engagements[0].kill_ids, vec![1, 2]);
+        assert_eq!(engagements[1].kill_ids, vec![3]);
+    }
+
+    #[test]
+    fn hull_swaps_merge_into_one_doctrine_cluster() {
+        let engagements = vec![
+            engagement(
+                1,
+                0,
+                30000142,
+                &[
+                    (11, 1001),
+                    (12, 1001),
+                    (13, 1002),
+                    (14, 1002),
+                    (15, 1003),
+                    (16, 1003),
+                ],
+            ),
+            engagement(
+                2,
+                20,
+                30000142,
+                &[
+                    (21, 1001),
+                    (22, 1001),
+                    (23, 1002),
+                    (24, 1002),
+                    (25, 1003),
+                    (26, 1003),
+                ],
+            ),
+            engagement(
+                3,
+                40,
+                30000142,
+                &[
+                    (31, 1001),
+                    (32, 1001),
+                    (33, 1002),
+                    (34, 1002),
+                    (35, 1003),
+                    (36, 1003),
+                ],
+            ),
+            engagement(
+                4,
+                60,
+                30000142,
+                &[
+                    (41, 1001),
+                    (42, 1001),
+                    (43, 1002),
+                    (44, 1002),
+                    (45, 1004),
+                    (46, 1004),
+                ],
+            ),
+            engagement(
+                5,
+                80,
+                30000142,
+                &[
+                    (51, 1001),
+                    (52, 1001),
+                    (53, 1002),
+                    (54, 1002),
+                    (55, 1004),
+                    (56, 1004),
+                ],
+            ),
+            engagement(
+                6,
+                100,
+                30000142,
+                &[
+                    (61, 1001),
+                    (62, 1001),
+                    (63, 1002),
+                    (64, 1002),
+                    (65, 1004),
+                    (66, 1004),
+                ],
+            ),
+        ];
+
+        let clusters = merge_close_doctrine_clusters(cluster_doctrines(&engagements), &engagements);
+        assert_eq!(clusters.len(), 1);
+
+        let stats = doctrine_cluster_stats(&clusters[0], &engagements);
+        assert_eq!(stats.engagement_count, 6);
+        assert!(stats.core_ship_types.contains(&1001));
+        assert!(stats.core_ship_types.contains(&1002));
+        assert_eq!(stats.core_ship_types.len(), 2);
     }
 }
 

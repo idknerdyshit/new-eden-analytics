@@ -163,9 +163,9 @@
 									</div>
 								</div>
 							</div>
-							{#if firstDoctrine}
-								<div class="flex flex-wrap items-center gap-1.5">
-									{#each firstDoctrine.ships.slice(0, 4) as ship, i}
+								{#if firstDoctrine}
+									<div class="flex flex-wrap items-center gap-1.5">
+										{#each firstDoctrine.ships.slice(0, 4) as ship, i}
 										<div class="flex items-center gap-1" title={ship.ship_name}>
 											<img
 												src="https://images.evetech.net/types/{ship.ship_type_id}/icon?size=32"
@@ -180,11 +180,22 @@
 									{/each}
 									{#if firstDoctrine.ships.length > 4}
 										<span class="text-xs text-[var(--color-text-secondary)]">+{firstDoctrine.ships.length - 4} more</span>
-									{/if}
-								</div>
-							{/if}
-							{#if profile.doctrines && profile.doctrines.length > 1}
-								<div class="mt-2 text-xs text-[var(--color-text-secondary)]">
+										{/if}
+									</div>
+									<div class="mt-2 flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">
+										{#if firstDoctrine.engagement_count}
+											<span>{firstDoctrine.engagement_count} engagement{firstDoctrine.engagement_count !== 1 ? 's' : ''}</span>
+										{/if}
+										{#if firstDoctrine.distinct_pilot_count}
+											<span>{firstDoctrine.distinct_pilot_count} pilot{firstDoctrine.distinct_pilot_count !== 1 ? 's' : ''}</span>
+										{/if}
+										{#if firstDoctrine.coverage_pct !== undefined}
+											<span>{firstDoctrine.coverage_pct}% coverage</span>
+										{/if}
+									</div>
+								{/if}
+								{#if profile.doctrines && profile.doctrines.length > 1}
+									<div class="mt-2 text-xs text-[var(--color-text-secondary)]">
 									{profile.doctrines.length} doctrine{profile.doctrines.length !== 1 ? 's' : ''} detected
 								</div>
 							{/if}

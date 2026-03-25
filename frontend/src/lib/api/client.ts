@@ -267,6 +267,10 @@ export interface DoctrineShipEntry {
 
 export interface DoctrineGroup {
 	ships: DoctrineShipEntry[];
+	engagement_count?: number;
+	distinct_pilot_count?: number;
+	coverage_pct?: number;
+	mean_similarity?: number;
 }
 
 /** @deprecated Use DoctrineGroup instead */

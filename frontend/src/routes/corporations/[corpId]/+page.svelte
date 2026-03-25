@@ -208,29 +208,45 @@
 				<section>
 					<h2 class="mb-4 text-lg font-semibold">Doctrines</h2>
 					<div class="space-y-4">
-						{#each dcts as group, gi}
-							<details class="group rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]" open>
-								<summary class="flex cursor-pointer items-center justify-between p-4 select-none">
-									<div class="flex flex-wrap items-center gap-2 overflow-hidden max-h-20">
-										{#each group.ships as ship, si}
-											<div class="flex items-center gap-1.5">
-												<img
-													src="https://images.evetech.net/types/{ship.ship_type_id}/icon?size=32"
-													alt={ship.ship_name}
-													class="h-6 w-6 shrink-0"
-												/>
-												<span class="whitespace-nowrap font-medium text-[var(--color-text-primary)]"
-													>{ship.ship_name}</span
-												>
+							{#each dcts as group, gi}
+								<details class="group rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]" open>
+									<summary class="flex cursor-pointer items-center justify-between p-4 select-none">
+										<div class="min-w-0">
+											<div class="flex max-h-20 flex-wrap items-center gap-2 overflow-hidden">
+												{#each group.ships as ship, si}
+													<div class="flex items-center gap-1.5">
+														<img
+															src="https://images.evetech.net/types/{ship.ship_type_id}/icon?size=32"
+															alt={ship.ship_name}
+															class="h-6 w-6 shrink-0"
+														/>
+														<span class="whitespace-nowrap font-medium text-[var(--color-text-primary)]"
+															>{ship.ship_name}</span
+														>
+													</div>
+													{#if si < group.ships.length - 1}
+														<span class="text-[var(--color-text-secondary)]">+</span>
+													{/if}
+												{/each}
 											</div>
-											{#if si < group.ships.length - 1}
-												<span class="text-[var(--color-text-secondary)]">+</span>
-											{/if}
-										{/each}
-									</div>
-									<span
-										class="ml-3 shrink-0 rounded-full bg-[color-mix(in_srgb,var(--color-accent-blue)_20%,transparent)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-blue)]"
-									>
+											<div class="mt-2 flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">
+												{#if group.engagement_count}
+													<span>{group.engagement_count} engagement{group.engagement_count !== 1 ? 's' : ''}</span>
+												{/if}
+												{#if group.distinct_pilot_count}
+													<span>{group.distinct_pilot_count} pilot{group.distinct_pilot_count !== 1 ? 's' : ''}</span>
+												{/if}
+												{#if group.coverage_pct !== undefined}
+													<span>{group.coverage_pct}% coverage</span>
+												{/if}
+												{#if group.mean_similarity !== undefined}
+													<span>{Math.round(group.mean_similarity * 100)}% cohesion</span>
+												{/if}
+											</div>
+										</div>
+										<span
+											class="ml-3 shrink-0 rounded-full bg-[color-mix(in_srgb,var(--color-accent-blue)_20%,transparent)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-blue)]"
+										>
 										{group.ships.length} ship{group.ships.length !== 1 ? 's' : ''}
 									</span>
 								</summary>
