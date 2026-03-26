@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = nea_db::create_pool(&database_url).await?;
     let esi = Arc::new(EsiClient::with_user_agent(
         "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)",
-    ));
+    )?);
 
     let type_ids = get_tracked_type_ids(&pool).await?;
     if type_ids.is_empty() {

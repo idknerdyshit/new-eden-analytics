@@ -57,7 +57,7 @@ statrs = "0.18"
 
 # Internal crates
 nea-db = { path = "crates/nea-db" }
-nea-esi = "0.4.0"
+nea-esi = "0.7.2"
 nea-zkill = { path = "crates/nea-zkill" }
 nea-server = { path = "crates/nea-server" }
 nea-analysis = { path = "crates/nea-analysis" }

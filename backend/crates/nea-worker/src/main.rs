@@ -69,7 +69,7 @@ async fn main() {
 
                 let esi = Arc::new(EsiClient::with_user_agent(
                     "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)",
-                ));
+                ).expect("failed to create ESI client"));
 
                 if let Err(e) = doctrine_aggregator::run_cycle(&pool, &esi).await {
                     tracing::error!("doctrine_aggregator: failed: {e}");
@@ -106,7 +106,7 @@ async fn main() {
     // Clients
     let esi = Arc::new(EsiClient::with_user_agent(
         "new-eden-analytics (sara@idknerdyshit.com; +https://github.com/idknerdyshit/new-eden-analytics; eve:Eyedeekay)",
-    ));
+    ).expect("failed to create ESI client"));
     let r2z2 = Arc::new(R2z2Client::new());
 
     tracing::info!("spawning worker tasks");

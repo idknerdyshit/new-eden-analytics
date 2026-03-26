@@ -91,7 +91,7 @@ async fn fetch_and_snapshot(
     esi: &EsiClient,
     type_id: i32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let orders = match esi.market_orders(THE_FORGE, type_id).await {
+    let orders = match esi.market_orders(THE_FORGE, type_id, None).await {
         Ok(o) => o,
         Err(EsiError::Api {
             status: 400,
